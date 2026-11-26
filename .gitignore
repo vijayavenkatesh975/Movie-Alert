@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+ticketnotify.db
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+venv/
+.venv/
+env/
+dist/
+build/
+*.egg-info/

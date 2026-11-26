@@ -1,0 +1,22 @@
+{
+  "theatres": [
+    {
+      "name": "SPI Cinemas: Sathyam, Royapettah",
+      "id": "SAT01",
+      "latitude": 13.0569,
+      "longitude": 80.2585,
+      "shows": [
+        {
+          "movieTitle": "Avatar: Fire and Ash",
+          "time": "11:00 AM",
+          "format": "2D",
+          "language": "Tamil",
+          "availableSeats": 75,
+          "totalSeats": 300,
+          "minPrice": 180.0,
+          "maxPrice": 320.0
+        }
+      ]
+    }
+  ]
+}

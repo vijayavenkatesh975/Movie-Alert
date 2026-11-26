@@ -1,0 +1,24 @@
+{
+  "output": {
+    "cinemas": [
+      {
+        "name": "PVR: Forum South Bangalore, Konanakunte",
+        "id": "PVR_FSB",
+        "lat": 12.8906,
+        "lng": 77.5621,
+        "showTimes": [
+          {
+            "filmName": "Avatar: Fire and Ash",
+            "showTime": "06:15 PM",
+            "screenType": "P[XL]",
+            "language": "English",
+            "availableSeats": 120,
+            "totalSeats": 380,
+            "minPrice": 320.0,
+            "maxPrice": 700.0
+          }
+        ]
+      }
+    ]
+  }
+}

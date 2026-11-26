@@ -1,0 +1,22 @@
+{
+  "venues": [
+    {
+      "name": "Cinepolis: Orion Mall, Rajajinagar",
+      "id": "CIN_ORION",
+      "lat": 13.0112,
+      "lng": 77.5550,
+      "slots": [
+        {
+          "title": "Avatar: Fire and Ash",
+          "startTime": "03:30 PM",
+          "format": "IMAX 3D",
+          "language": "English",
+          "availableSeats": 60,
+          "totalSeats": 250,
+          "minPrice": 350.0,
+          "maxPrice": 650.0
+        }
+      ]
+    }
+  ]
+}

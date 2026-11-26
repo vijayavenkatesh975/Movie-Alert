@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ticketnotify-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        value: 1483331491
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./ticketnotify.db
+      - key: WEBHOOK_MODE
+        value: false
+      - key: PORT
+        value: 10000
+      - key: LOG_LEVEL
+        value: INFO
+      - key: HOT_POLL_INTERVAL
+        value: 15
+      - key: IDLE_POLL_INTERVAL
+        value: 120
+      - key: USER_AGENT_ROTATION
+        value: true

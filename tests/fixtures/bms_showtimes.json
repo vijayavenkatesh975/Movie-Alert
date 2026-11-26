@@ -1,0 +1,53 @@
+{
+  "cinemas": [
+    {
+      "VenueName": "PVR IMAX: Forum Mall, Koramangala",
+      "VenueCode": "PVRKOR",
+      "Latitude": "12.9352",
+      "Longitude": "77.6111",
+      "Session": [
+        {
+          "EventTitle": "Avatar: Fire and Ash",
+          "ShowTimeDisplay": "10:30 AM",
+          "ScreenFormat": "IMAX 3D",
+          "Language": "English",
+          "AvailableSeats": 42,
+          "TotalSeats": 280,
+          "MinPrice": "450.00",
+          "MaxPrice": "850.00",
+          "Status": "filling_fast"
+        },
+        {
+          "EventTitle": "Avatar: Fire and Ash",
+          "ShowTimeDisplay": "02:15 PM",
+          "ScreenFormat": "IMAX 3D",
+          "Language": "English",
+          "AvailableSeats": 180,
+          "TotalSeats": 280,
+          "MinPrice": "450.00",
+          "MaxPrice": "850.00",
+          "Status": "available"
+        }
+      ]
+    },
+    {
+      "VenueName": "INOX: Garuda Mall, Magrath Road",
+      "VenueCode": "INXGAR",
+      "Latitude": "12.9705",
+      "Longitude": "77.6097",
+      "Session": [
+        {
+          "EventTitle": "Avatar: Fire and Ash",
+          "ShowTimeDisplay": "07:00 PM",
+          "ScreenFormat": "2D",
+          "Language": "Tamil",
+          "AvailableSeats": 8,
+          "TotalSeats": 220,
+          "MinPrice": "200.00",
+          "MaxPrice": "380.00",
+          "Status": "almost_full"
+        }
+      ]
+    }
+  ]
+}

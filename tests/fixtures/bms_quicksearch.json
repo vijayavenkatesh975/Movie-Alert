@@ -1,0 +1,24 @@
+{
+  "movies": {
+    "data": [
+      {
+        "EventCode": "ET00392345",
+        "EventTitle": "Avatar: Fire and Ash",
+        "EventLanguage": "English,Hindi,Tamil,Telugu",
+        "EventDimension": "2D,3D,IMAX 3D,4DX",
+        "EventImageCode": "et00392345",
+        "EventReleaseDate": "2026-12-18",
+        "EventGenre": "Action,Adventure,Sci-Fi"
+      },
+      {
+        "EventCode": "ET00412389",
+        "EventTitle": "Kalki 2898 AD Part 2",
+        "EventLanguage": "Telugu,Hindi,Tamil",
+        "EventDimension": "2D,3D,IMAX",
+        "EventImageCode": "et00412389",
+        "EventReleaseDate": "2026-11-28",
+        "EventGenre": "Sci-Fi,Action"
+      }
+    ]
+  }
+}
