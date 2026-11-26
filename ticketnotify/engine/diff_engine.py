@@ -103,7 +103,20 @@ class DiffEngine:
                 prev_state = BookingState(prev_state_str) if prev_state_str in BookingState._value2member_map_ else BookingState.NOT_OPEN
             elif any(s.show_id in old_shows_dict for s in c_shows):
                 # Cinema/date shows already existed in previous snapshot
-                prev_state = BookingState.OPEN
+                has_prev_available = any(
+                    old_shows_dict[s.show_id].get("seat_status") in (
+                        SeatStatus.AVAILABLE,
+                        SeatStatus.FILLING_FAST,
+                        SeatStatus.ALMOST_FULL,
+                        "available",
+                        "filling_fast",
+                        "almost_full",
+                    )
+                    or (old_shows_dict[s.show_id].get("available_seats") or 0) > 0
+                    for s in c_shows
+                    if s.show_id in old_shows_dict
+                )
+                prev_state = BookingState.SEATS_AVAILABLE if has_prev_available else BookingState.OPEN
             else:
                 prev_state = BookingState.NOT_OPEN
 

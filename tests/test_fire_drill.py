@@ -7,6 +7,7 @@ import time
 import pytest
 from unittest.mock import AsyncMock
 
+from sqlalchemy import select, delete
 from ticketnotify.adapters.base import PlatformAdapter, FetchResult, Show, SeatStatus, MovieMatch
 from ticketnotify.adapters.registry import registry
 from ticketnotify.database.models import User, Alert, Location, PlatformState
@@ -71,8 +72,9 @@ async def test_fire_drill_latency_and_delivery():
     registry.register(adapter)
 
     # 2. Setup database user & alert
+    unique_tg_id = int(time.time() * 1000) % 1000000000
     async with get_db_session() as session:
-        user = User(telegram_id=888777666, username="firedrill_user", language="en", is_active=True)
+        user = User(telegram_id=unique_tg_id, username=f"firedrill_{unique_tg_id}", language="en", is_active=True)
         session.add(user)
         await session.flush()
 

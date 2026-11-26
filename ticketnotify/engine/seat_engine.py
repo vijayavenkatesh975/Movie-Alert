@@ -224,7 +224,7 @@ def find_seat_groups(layout: SeatLayout, prefs: SeatPrefs) -> List[SeatGroup]:
                 continue
             if not _matches_category(s, prefs.seat_category):
                 continue
-            if prefs.column_zone != "any" and not _matches_column_zone(s, layout.total_cols, prefs.column_zone, grid):
+            if prefs.column_zone not in ("any", "aisle") and not _matches_column_zone(s, layout.total_cols, prefs.column_zone, grid):
                 continue
             candidate_seats.append(s)
 
@@ -235,6 +235,9 @@ def find_seat_groups(layout: SeatLayout, prefs: SeatPrefs) -> List[SeatGroup]:
             # Find contiguous runs where col_index is strictly consecutive
             for i in range(len(candidate_seats) - needed + 1):
                 window = candidate_seats[i : i + needed]
+                # If aisle requested, at least one seat in the group must touch an aisle
+                if prefs.column_zone == "aisle" and not any(_matches_column_zone(s, layout.total_cols, "aisle", grid) for s in window):
+                    continue
                 # Verify consecutive column indices
                 is_consecutive = True
                 for j in range(len(window) - 1):
@@ -262,6 +265,8 @@ def find_seat_groups(layout: SeatLayout, prefs: SeatPrefs) -> List[SeatGroup]:
             # Non-consecutive: pick best window of N candidate seats in this row
             for i in range(len(candidate_seats) - needed + 1):
                 window = candidate_seats[i : i + needed]
+                if prefs.column_zone == "aisle" and not any(_matches_column_zone(s, layout.total_cols, "aisle", grid) for s in window):
+                    continue
                 score = _score_seat_group(window, layout, prefs, grid)
                 cat = window[0].category
                 avg_p = sum(s.price for s in window) / float(len(window))

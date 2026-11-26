@@ -90,15 +90,16 @@ def test_column_zone_properties(column_zone: str):
 
     grid = layout.get_grid()
     for g in groups:
-        for s in g.seats:
-            frac = s.col_index / 15.0
-            if column_zone == "center":
-                assert 0.30 <= frac <= 0.70
-            elif column_zone == "left":
-                assert frac < 0.30
-            elif column_zone == "right":
-                assert frac > 0.70
-            elif column_zone == "corner":
-                assert frac <= 0.15 or frac >= 0.85
-            elif column_zone == "aisle":
-                assert s.is_aisle or (s.row_index, s.col_index - 1) not in grid or (s.row_index, s.col_index + 1) not in grid
+        if column_zone == "aisle":
+            assert any(s.is_aisle or (s.row_index, s.col_index - 1) not in grid or (s.row_index, s.col_index + 1) not in grid for s in g.seats)
+        else:
+            for s in g.seats:
+                frac = s.col_index / 15.0
+                if column_zone == "center":
+                    assert 0.30 <= frac <= 0.70
+                elif column_zone == "left":
+                    assert frac < 0.30
+                elif column_zone == "right":
+                    assert frac > 0.70
+                elif column_zone == "corner":
+                    assert frac <= 0.15 or frac >= 0.85
