@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 from ticketnotify.adapters.base import PlatformAdapter, FetchResult, Show, SeatStatus, MovieMatch
 from ticketnotify.adapters.registry import registry
 from ticketnotify.database.models import User, Alert, Location
+from ticketnotify.database.crud import get_or_create_user
 from ticketnotify.database.session import get_db_session, init_db
 from ticketnotify.engine.scheduler import WatchGroup, scheduler
 from ticketnotify.engine.notifier import notifier
@@ -67,9 +68,8 @@ async def run_fire_drill():
     registry.register(adapter)
 
     async with get_db_session() as session:
-        user = User(telegram_id=1483331491, username="admin", language="en", is_active=True)
-        session.add(user)
-        await session.flush()
+        user, _ = await get_or_create_user(session, telegram_id=1483331491, username="admin")
+        user.is_active = True
 
         loc = Location(
             user_id=user.id,
