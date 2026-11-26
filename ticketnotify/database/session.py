@@ -24,6 +24,12 @@ def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         db_url = settings.DATABASE_URL
+        # Auto-normalize PostgreSQL scheme for SQLAlchemy asyncpg
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
         # Configure engine options
         connect_args = {}
         if db_url.startswith("sqlite"):
