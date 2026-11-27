@@ -103,6 +103,17 @@ async def telegram_webhook(
         return {"status": "error", "message": str(e)}
 
 
+@app.get("/")
+async def root():
+    """Root health and status endpoint."""
+    return {
+        "service": "TicketNotify",
+        "status": "running",
+        "bot": "@Tickets_NotifyBot",
+        "scheduler_running": scheduler._running,
+    }
+
+
 @app.get("/health")
 async def health_check():
     """System health check verifying database and platforms."""
@@ -119,13 +130,12 @@ async def health_check():
     platform_health = await registry.health_check_all()
     circuit_statuses = registry.get_circuit_statuses()
 
-    all_ok = db_ok and any(platform_health.values())
-    status_code = status.HTTP_200_OK if all_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+    status_code = status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(
         status_code=status_code,
         content={
-            "status": "healthy" if all_ok else "unhealthy",
+            "status": "healthy" if db_ok else "unhealthy",
             "database": "connected" if db_ok else "disconnected",
             "scheduler_running": scheduler._running,
             "platforms": platform_health,
