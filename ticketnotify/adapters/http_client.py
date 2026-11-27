@@ -89,6 +89,10 @@ class ResilientHttpClient:
         except Exception as e:
             elapsed_ms = (time.time() - t0) * 1000.0
             proxy_manager.report_result(proxy_url, success=False, latency_ms=elapsed_ms)
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (403, 429):
+                # Backoff with jitter on 403/429 rate limit
+                backoff = random.uniform(1.0, 3.0)
+                await asyncio.sleep(backoff)
             raise e
 
     async def post_json(
@@ -125,6 +129,10 @@ class ResilientHttpClient:
         except Exception as e:
             elapsed_ms = (time.time() - t0) * 1000.0
             proxy_manager.report_result(proxy_url, success=False, latency_ms=elapsed_ms)
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (403, 429):
+                # Backoff with jitter on 403/429 rate limit
+                backoff = random.uniform(1.0, 3.0)
+                await asyncio.sleep(backoff)
             raise e
 
     async def close(self) -> None:

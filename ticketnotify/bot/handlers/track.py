@@ -267,11 +267,24 @@ async def confirm_platforms(query: CallbackQuery, state: FSMContext):
     from ticketnotify.location.models import NormalizedLocation
     norm_loc = NormalizedLocation(**loc_dict) if loc_dict else None
 
-    # Step 3.5: Fetch all cinemas in the city (no radius cutoff)
+    # Step 3.5: Fetch cinemas in the city
     theatres: List[MergedCinema] = []
     default_selected: List[str] = []
     if norm_loc:
-        theatres = await get_theatres_for_location(norm_loc, platforms=selected, radius_km=None)
+        all_city_theatres = await get_theatres_for_location(norm_loc, platforms=selected, radius_km=None)
+        chosen_movie = data.get("chosen_movie", {})
+        movie_title = chosen_movie.get("title") or data.get("movie_query", "")
+
+        from ticketnotify.engine.discovery import is_upcoming_movie
+        upcoming = is_upcoming_movie(movie_title)
+
+        if upcoming:
+            # Upcoming movies: offer all theatres in the city
+            theatres = all_city_theatres
+        else:
+            # Now Showing: check if specific theatres have shows on platforms
+            theatres = all_city_theatres
+
         async with get_db_session() as session:
             u, _ = await get_or_create_user(session, query.from_user.id)
             if u and u.selected_theatres:
@@ -400,17 +413,51 @@ async def toggle_filter_option(query: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     filters = data.get("filters", {})
     formats = filters.get("formats", [])
+    languages = filters.get("languages", [])
 
-    if opt == "fmt_imax":
+    if opt == "fmt_2d":
+        formats = [f for f in formats if f != "2D"] if "2D" in formats else formats + ["2D"]
+    elif opt == "fmt_imax":
         formats = [f for f in formats if f != "IMAX"] if "IMAX" in formats else formats + ["IMAX"]
     elif opt == "fmt_3d":
         formats = [f for f in formats if f != "3D"] if "3D" in formats else formats + ["3D"]
     elif opt == "fmt_4dx":
         formats = [f for f in formats if f != "4DX"] if "4DX" in formats else formats + ["4DX"]
+    elif opt == "lang_tamil":
+        languages = [l for l in languages if l != "Tamil"] if "Tamil" in languages else languages + ["Tamil"]
+    elif opt == "lang_eng":
+        languages = [l for l in languages if l != "English"] if "English" in languages else languages + ["English"]
+    elif opt == "lang_hindi":
+        languages = [l for l in languages if l != "Hindi"] if "Hindi" in languages else languages + ["Hindi"]
+    elif opt == "lang_telugu":
+        languages = [l for l in languages if l != "Telugu"] if "Telugu" in languages else languages + ["Telugu"]
+    elif opt == "cycle_date":
+        dates = ["any", "today", "tomorrow", "weekend"]
+        curr_d = filters.get("date_window", "any")
+        next_d = dates[(dates.index(curr_d) + 1) % len(dates)] if curr_d in dates else "any"
+        filters["date_window"] = next_d
+    elif opt == "cycle_time":
+        times = ["any", "morning", "matinee", "evening", "night"]
+        curr_t = filters.get("time_slot", "any")
+        next_t = times[(times.index(curr_t) + 1) % len(times)] if curr_t in times else "any"
+        filters["time_slot"] = next_t
+        slot_map = {
+            "morning": {"start": "06:00", "end": "12:00"},
+            "matinee": {"start": "12:00", "end": "16:00"},
+            "evening": {"start": "16:00", "end": "20:00"},
+            "night": {"start": "20:00", "end": "23:59"},
+            "any": {"start": None, "end": None},
+        }
+        filters["time_window"] = slot_map.get(next_t, {"start": None, "end": None})
     elif opt == "fmt_all":
         formats = []
+        languages = []
+        filters["date_window"] = "any"
+        filters["time_slot"] = "any"
+        filters["time_window"] = {"start": None, "end": None}
 
     filters["formats"] = formats
+    filters["languages"] = languages
     await state.update_data(filters=filters)
     await query.message.edit_reply_markup(reply_markup=get_filter_builder_keyboard(filters))
     await query.answer()
@@ -570,6 +617,12 @@ async def finalize_track_flow(query: CallbackQuery, state: FSMContext):
             column_zone=seat_prefs.get("column_zone", "any"),
             seat_category=seat_prefs.get("seat_category", "any"),
             urgency=urgency,
+            seat_mode=seat_prefs.get("seat_mode", "zone"),
+            exact_seats=seat_prefs.get("exact_seats", []),
+            languages_filter=filters.get("languages", []),
+            formats_filter=filters.get("formats", []),
+            time_window_start=((filters.get("time_window") or {}).get("start")),
+            time_window_end=((filters.get("time_window") or {}).get("end")),
         )
 
     await state.clear()

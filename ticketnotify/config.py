@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Telegram Bot
     BOT_TOKEN: str = Field(default="9094648730:AAGav3MwDbYgAABKejC0XUQwy9OupjJe2A0", description="Telegram Bot Token")
     ADMIN_ID: int = Field(default=1483331491, description="Telegram ID of the admin")
+    TMDB_API_KEY: Optional[str] = Field(default=None, description="TMDB API key for upcoming movie discovery")
 
     # Database & Cache
     DATABASE_URL: str = Field(

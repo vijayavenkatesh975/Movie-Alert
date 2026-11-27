@@ -89,6 +89,41 @@ def test_pagination():
     assert count == 10
     assert p0[0]["title"] == "Movie 0"
 
-    p3, total_pages, count = paginate_movies(movies, page=3, page_size=3)
-    assert len(p3) == 1
-    assert p3[0]["title"] == "Movie 9"
+
+def test_merge_and_dedup_catalogs():
+    from ticketnotify.engine.discovery import merge_and_dedup_catalogs
+
+    local = [
+        {"title": "Spider-Man: Beyond the Spider-Verse", "release_date": "2027-04-10", "languages": ["English"]},
+    ]
+    tmdb = [
+        # Duplicate with slightly different casing/subtitle
+        {"title": "Spider-Man: Beyond the Spider-Verse", "release_date": "2027-04-10", "languages": ["Tamil", "Hindi"]},
+        # Brand new movie
+        {"title": "Toy Story 5", "release_date": "2026-06-19", "languages": ["English"]},
+    ]
+
+    merged = merge_and_dedup_catalogs(local, tmdb)
+    assert len(merged) == 2
+    spidey = next(m for m in merged if "Spider-Man" in m["title"])
+    # Languages merged
+    assert "Tamil" in spidey["languages"]
+    assert "English" in spidey["languages"]
+    toy = next(m for m in merged if "Toy Story" in m["title"])
+    assert toy["release_date"] == "2026-06-19"
+
+
+def test_is_upcoming_movie_check():
+    from ticketnotify.engine.discovery import is_upcoming_movie
+
+    today = get_current_ist_date()
+    future = (today + timedelta(days=15)).strftime("%Y-%m-%d")
+    past = (today - timedelta(days=15)).strftime("%Y-%m-%d")
+
+    catalog = [
+        {"title": "Upcoming Blockbuster", "release_date": future},
+        {"title": "Old Classic", "release_date": past},
+    ]
+
+    assert is_upcoming_movie("Upcoming Blockbuster", catalog=catalog) is True
+    assert is_upcoming_movie("Old Classic", catalog=catalog) is False

@@ -11,15 +11,23 @@ from ticketnotify.adapters.registry import registry
 from ticketnotify.adapters.base import FetchStatus
 
 
-async def run_platform_selfcheck() -> List[Dict[str, Any]]:
+async def run_platform_selfcheck(city_name: str = "Chennai") -> List[Dict[str, Any]]:
     platforms = ["bms", "pvrinox", "district", "ticketnew"]
     results = []
 
-    # Test location: Bengaluru
-    norm_loc = await geocoder.geocode("Bengaluru")
+    # Test location
+    norm_loc = await geocoder.geocode(city_name)
     if not norm_loc:
-        print("Error: Could not resolve Bengaluru location for self-check.")
-        return []
+        from ticketnotify.location.models import NormalizedLocation
+        norm_loc = NormalizedLocation(
+            raw_query=city_name,
+            city=city_name.title(),
+            country="India",
+            country_code="in",
+            latitude=13.0827,
+            longitude=80.2707,
+            display_name=f"{city_name}, India",
+        )
     norm_loc = map_location_to_platforms(norm_loc)
 
     for p in platforms:
@@ -94,8 +102,9 @@ def print_selfcheck_table(results: List[Dict[str, Any]]) -> None:
 
 
 async def main():
-    print("🔍 Running TicketNotify multi-platform self-check...")
-    results = await run_platform_selfcheck()
+    city = sys.argv[1] if len(sys.argv) > 1 else "Chennai"
+    print(f"🔍 Running TicketNotify multi-platform self-check for {city}...")
+    results = await run_platform_selfcheck(city)
     print_selfcheck_table(results)
     
     # Exit 0 if all adapters registered and responded

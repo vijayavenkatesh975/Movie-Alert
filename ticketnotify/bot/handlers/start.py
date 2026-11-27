@@ -86,6 +86,24 @@ async def handle_start(message: Message, state: FSMContext):
                 update(User).where(User.id == user.id).values(is_active=True)
             )
 
+    command_args = (message.text or "").split(maxsplit=1)
+    deep_link_movie = None
+    if len(command_args) > 1 and command_args[1].startswith("track_"):
+        import urllib.parse
+        raw_slug = command_args[1][6:]
+        deep_link_movie = urllib.parse.unquote_plus(raw_slug)
+
+    if deep_link_movie and not created:
+        # User already onboarded, directly initialize track flow for this shared movie
+        await message.answer(
+            f"🎬 *Shared Movie Alert Link Activated!*\n\n"
+            f"Ready to track tickets for: *{deep_link_movie}*\n"
+            f"Type /track or send location to monitor ticket release.",
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return
+
     welcome_title = get_text("welcome", user.language)
     intro_text = get_text("intro", user.language)
     step1_title = get_text("select_lang", user.language)

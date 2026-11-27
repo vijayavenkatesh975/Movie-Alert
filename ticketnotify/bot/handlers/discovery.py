@@ -212,6 +212,27 @@ async def on_discovery_alert_tap(query: CallbackQuery, state: FSMContext):
     await query.answer()
 
 
+@router.callback_query(F.data.startswith("disc_det:"))
+async def on_discovery_details(query: CallbackQuery, state: FSMContext):
+    movie_title = query.data.split(":", 1)[1]
+    from ticketnotify.engine.discovery import MASTER_MOVIE_CATALOG, format_movie_card
+    matched = None
+    for m in MASTER_MOVIE_CATALOG:
+        if m["title"].lower().startswith(movie_title.lower()) or movie_title.lower() in m["title"].lower():
+            matched = m
+            break
+    if not matched:
+        matched = {"title": movie_title, "formatted_release_date": "Confirmed", "languages": ["All"]}
+
+    card_text = format_movie_card(matched, category="all")
+    buttons = [
+        [InlineKeyboardButton(text=f"🚨 Alert Me for '{movie_title[:20]}'", callback_data=f"disc_open:{movie_title[:25]}")],
+        [InlineKeyboardButton(text="⬅️ Back to Catalog", callback_data="disc_cat:now_showing")],
+    ]
+    await query.message.answer(card_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await query.answer()
+
+
 @router.callback_query(F.data == "noop")
 async def on_noop(query: CallbackQuery):
     await query.answer()

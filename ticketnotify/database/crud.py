@@ -226,6 +226,12 @@ async def create_alert(
     seat_category: str = "any",
     max_price_per_seat: Optional[float] = None,
     urgency: str = "WARM",
+    seat_mode: str = "zone",
+    exact_seats: Optional[List[str]] = None,
+    languages_filter: Optional[List[str]] = None,
+    formats_filter: Optional[List[str]] = None,
+    time_window_start: Optional[str] = None,
+    time_window_end: Optional[str] = None,
 ) -> Alert:
     default_alert_types = [
         "bookings_opened",
@@ -250,6 +256,12 @@ async def create_alert(
         seat_category=seat_category,
         max_price_per_seat=max_price_per_seat,
         urgency=urgency,
+        seat_mode=seat_mode,
+        exact_seats=exact_seats or [],
+        languages_filter=languages_filter or (filters_json or {}).get("languages", []),
+        formats_filter=formats_filter or (filters_json or {}).get("formats", []),
+        time_window_start=time_window_start or ((filters_json or {}).get("time_window") or {}).get("start"),
+        time_window_end=time_window_end or ((filters_json or {}).get("time_window") or {}).get("end"),
         status="active",
         is_muted=False,
     )
@@ -450,3 +462,69 @@ async def log_notification_sent(
     session.add(log)
     await session.flush()
     return log
+
+
+async def get_user_notification_history(
+    session: AsyncSession,
+    user_id: int,
+    limit: int = 20,
+) -> List[NotificationLog]:
+    """Retrieve last N notifications sent to a user, ordered by sent_at DESC."""
+    from sqlalchemy.orm import selectinload
+    stmt = (
+        select(NotificationLog)
+        .where(NotificationLog.user_id == user_id)
+        .options(selectinload(NotificationLog.alert))
+        .order_by(NotificationLog.sent_at.desc())
+        .limit(limit)
+    )
+    result = await session.scalars(stmt)
+    return list(result.all())
+
+
+async def get_cached_screen_layout(
+    session: AsyncSession,
+    platform: str,
+    cinema_id: str,
+    screen_name: str,
+) -> Optional[Dict[str, Any]]:
+    from ticketnotify.database.models import ScreenLayoutCache
+    stmt = select(ScreenLayoutCache).where(
+        ScreenLayoutCache.platform == platform.lower(),
+        ScreenLayoutCache.cinema_id == str(cinema_id),
+        ScreenLayoutCache.screen_name == str(screen_name),
+    )
+    row = await session.scalar(stmt)
+    return row.layout_json if row else None
+
+
+async def save_screen_layout(
+    session: AsyncSession,
+    platform: str,
+    cinema_id: str,
+    screen_name: str,
+    layout_dict: Dict[str, Any],
+) -> None:
+    from ticketnotify.database.models import ScreenLayoutCache
+    stmt = select(ScreenLayoutCache).where(
+        ScreenLayoutCache.platform == platform.lower(),
+        ScreenLayoutCache.cinema_id == str(cinema_id),
+        ScreenLayoutCache.screen_name == str(screen_name),
+    )
+    row = await session.scalar(stmt)
+    if row:
+        row.layout_json = layout_dict
+        row.version += 1
+        row.updated_at = datetime.utcnow()
+    else:
+        session.add(
+            ScreenLayoutCache(
+                platform=platform.lower(),
+                cinema_id=str(cinema_id),
+                screen_name=str(screen_name),
+                layout_json=layout_dict,
+                version=1,
+            )
+        )
+    await session.commit()
+

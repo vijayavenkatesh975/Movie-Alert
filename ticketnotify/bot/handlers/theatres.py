@@ -336,6 +336,25 @@ async def on_theatre_action(query: CallbackQuery, state: FSMContext):
         await query.answer("Cleared all selections.")
         return
 
+    elif act == "refresh":
+        await query.answer("🔄 Refreshing live theatres from platforms...")
+        norm_loc = NormalizedLocation(
+            raw_query=city_name,
+            city=city_name,
+            country="India",
+            country_code="in",
+            latitude=13.0827,
+            longitude=80.2707,
+            display_name=f"{city_name}, India",
+        )
+        fresh_theatres = await get_theatres_for_location(location=norm_loc, force_refresh=True)
+        await state.update_data(
+            raw_theatres=[t.model_dump() for t in fresh_theatres],
+            page=0,
+        )
+        await render_theatres_picker(query, state, edit=True)
+        return
+
     elif act == "filt_loc":
         # Show locality buttons
         localities = get_unique_localities(theatres)

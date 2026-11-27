@@ -74,14 +74,28 @@ async def on_alert_chosen_for_seats(query: CallbackQuery, state: FSMContext):
     }
 
     await state.update_data(edit_alert_id=alert_id, seat_prefs=prefs)
+    layout_notice = "\nℹ️ _No screen layout is cached yet for this cinema (no shows have opened or been polled yet). Falling back to Zone-based preference selection (Front, Middle, Back)._\n"
     await query.message.edit_text(
-        f"💺 *Seat Preferences for {alert.movie_query}*\n\n"
-        "Configure group size, consecutive requirement, screen row/column zone, and category:",
+        f"💺 *Seat Preferences for {alert.movie_query}*\n"
+        f"{layout_notice}\n"
+        "Configure group size (1-10), consecutive requirement, screen zone, and category:",
         parse_mode="Markdown",
         reply_markup=get_seat_preferences_keyboard(prefs),
     )
     await state.set_state(SeatsFlow.configuring_seats)
     await query.answer()
+
+
+@router.callback_query(SeatsFlow.configuring_seats, F.data == "seat_toggle_mode")
+async def on_toggle_mode(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    prefs = data.get("seat_prefs", {})
+    curr = prefs.get("seat_mode", "zone")
+    prefs["seat_mode"] = "exact" if curr == "zone" else "zone"
+    await state.update_data(seat_prefs=prefs)
+    await query.message.edit_reply_markup(reply_markup=get_seat_preferences_keyboard(prefs))
+    mode_name = "🎯 Exact Seat Mode" if prefs["seat_mode"] == "exact" else "🌐 Zone Mode"
+    await query.answer(f"Switched to {mode_name}")
 
 
 @router.callback_query(SeatsFlow.configuring_seats, F.data == "seat_cycle_needed")

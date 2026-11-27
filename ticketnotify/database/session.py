@@ -81,6 +81,8 @@ async def init_db() -> None:
                 existing_cols = {row[1] for row in cursor.fetchall()}
                 new_columns = [
                     ("selected_cinemas", "JSON DEFAULT '{}'"),
+                    ("seat_mode", "VARCHAR(20) DEFAULT 'zone'"),
+                    ("exact_seats", "JSON DEFAULT '[]'"),
                     ("seats_needed", "INTEGER DEFAULT 1"),
                     ("must_be_consecutive", "BOOLEAN DEFAULT 1"),
                     ("row_zone", "VARCHAR(20) DEFAULT 'any'"),
@@ -88,6 +90,10 @@ async def init_db() -> None:
                     ("seat_category", "VARCHAR(50) DEFAULT 'any'"),
                     ("max_price_per_seat", "FLOAT DEFAULT NULL"),
                     ("urgency", "VARCHAR(20) DEFAULT 'WARM'"),
+                    ("languages_filter", "JSON DEFAULT '[]'"),
+                    ("formats_filter", "JSON DEFAULT '[]'"),
+                    ("time_window_start", "VARCHAR(10) DEFAULT NULL"),
+                    ("time_window_end", "VARCHAR(10) DEFAULT NULL"),
                 ]
                 for col_name, col_def in new_columns:
                     if col_name not in existing_cols:

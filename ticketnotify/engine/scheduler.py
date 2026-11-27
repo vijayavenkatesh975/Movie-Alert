@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from enum import Enum
 from typing import Dict, List, Set, Any, Optional
 
 from ticketnotify.config import settings
@@ -17,7 +18,7 @@ from ticketnotify.database.crud import (
 from ticketnotify.database.models import Alert
 from sqlalchemy import update
 from ticketnotify.adapters.registry import registry
-from ticketnotify.adapters.base import Show, FetchResult
+from ticketnotify.adapters.base import Show, FetchResult, SeatStatus
 from ticketnotify.engine.diff_engine import (
     DiffEngine,
     compute_snapshot_hash,
@@ -26,6 +27,13 @@ from ticketnotify.engine.diff_engine import (
 from ticketnotify.engine.notifier import notifier
 
 logger = logging.getLogger(__name__)
+
+
+class TheatricalShowState(str, Enum):
+    NOT_OPEN = "NOT_OPEN"
+    OPEN = "OPEN"
+    SEATS_AVAILABLE = "SEATS_AVAILABLE"
+
 
 
 class WatchGroup:
@@ -66,6 +74,13 @@ class AdaptiveScheduler:
         self._running = True
         self._scheduler_task = asyncio.create_task(self._run_loop())
         logger.info("Adaptive polling scheduler started.")
+
+        has_proxies = bool(settings.PROXY_LIST.strip()) if getattr(settings, "PROXY_LIST", None) else False
+        if not has_proxies:
+            logger.warning(
+                "STARTUP WARNING: Running HOT watches without proxy rotation! "
+                "Capping direct-IP polling to minimum 5.0s to avoid IP bans."
+            )
 
     async def stop(self) -> None:
         """Stops background scheduler."""
@@ -140,10 +155,27 @@ class AdaptiveScheduler:
                     current_groups[group_key].is_hot = True
 
         self._watch_groups = current_groups
+        has_proxies = bool(settings.PROXY_LIST.strip()) if getattr(settings, "PROXY_LIST", None) else False
 
         # Step 3: For each WatchGroup, check if its polling interval has elapsed
         now = time.time()
         for group in self._watch_groups.values():
+            # Tier auto-upgrade by release date (final 48h -> HOT)
+            try:
+                from ticketnotify.engine.discovery import MASTER_MOVIE_CATALOG, get_current_ist_date
+                import rapidfuzz
+                for m in MASTER_MOVIE_CATALOG:
+                    if rapidfuzz.fuzz.token_set_ratio(group.movie_title.lower(), m["title"].lower()) >= 80:
+                        r_str = m.get("release_date")
+                        if r_str:
+                            r_date = datetime.strptime(r_str, "%Y-%m-%d").date()
+                            delta_days = (r_date - get_current_ist_date()).days
+                            if delta_days <= 2:
+                                group.is_hot = True
+                        break
+            except Exception:
+                pass
+
             # Adaptive tiering: HOT (1-3s), WARM (10-15s), COLD (60-120s)
             urgencies = [getattr(a, "urgency", "WARM") for a in group.alerts]
             if "HOT" in urgencies or group.is_hot:
@@ -152,6 +184,10 @@ class AdaptiveScheduler:
                 interval = 12.0
             else:
                 interval = 60.0
+
+            # Direct-IP protection: cap polling to 5.0s if no proxy rotation
+            if not has_proxies:
+                interval = max(interval, 5.0)
 
             last_polled = self._last_polled_times.get(group.key, 0.0)
             if now - last_polled >= interval:
@@ -276,11 +312,12 @@ class AdaptiveScheduler:
                     # Save new snapshot with cinema_states
                     cinema_states = {}
                     for s in new_shows:
-                        c_key = f"{s.cinema_id}:{s.date}"
+                        d_str = str(s.date) if getattr(s, "date", None) else (s.show_time.strftime("%Y-%m-%d") if hasattr(s.show_time, "strftime") else str(s.show_time)[:10])
+                        c_key = f"{s.cinema_id}:{d_str}"
                         if s.available_seats and s.available_seats > 0:
-                            cinema_states[c_key] = "SEATS_AVAILABLE"
+                            cinema_states[c_key] = TheatricalShowState.SEATS_AVAILABLE.value
                         else:
-                            cinema_states[c_key] = "OPEN"
+                            cinema_states[c_key] = TheatricalShowState.OPEN.value
 
                     new_snapshot_data = {
                         "hash": new_hash,

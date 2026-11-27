@@ -4,6 +4,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+import os
+import subprocess
 from fastapi import FastAPI, Request, Header, HTTPException, status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from aiogram import Bot, Dispatcher
@@ -16,6 +18,7 @@ from ticketnotify.database.models import User, Alert, PlatformState, Notificatio
 from ticketnotify.adapters.registry import registry
 from ticketnotify.engine.scheduler import scheduler
 from ticketnotify.bot import create_bot, create_dispatcher, init_bot_services
+from ticketnotify.cache.redis import check_redis_health
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +43,60 @@ async def lifespan(app: FastAPI):
     # 2. Initialize bot & notifier services
     await init_bot_services(bot)
 
-    # 3. Start adaptive polling scheduler
+    # 3. Startup Self-Check
+    db_type = "PostgreSQL" if "postgres" in settings.DATABASE_URL else "SQLite"
+    try:
+        async with get_db_session() as session:
+            await session.scalar(select(1))
+        logger.info(f"Startup DB check passed: connected to {db_type}")
+    except Exception as e:
+        logger.error(f"Startup DB connection failed: {e}")
+
+    redis_ok, redis_desc = await check_redis_health()
+    logger.info(f"Startup Redis check: {redis_desc}")
+
+    if not settings.TMDB_API_KEY:
+        logger.warning(
+            "Startup Notice: TMDB_API_KEY is not set. Upcoming movie catalog from TMDB "
+            "will be disabled; falling back to platform live catalogs only."
+        )
+
+    # Bot verification & Admin Startup notification
+    try:
+        me = await bot.get_me()
+        logger.info(f"Connected to Telegram Bot: @{me.username} (ID: {me.id})")
+
+        commit_hash = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+        if not commit_hash:
+            try:
+                commit_hash = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"], text=True
+                ).strip()
+            except Exception:
+                commit_hash = "production"
+
+        admin_startup_msg = (
+            f"🚀 <b>TicketNotify Bot Started Successfully!</b>\n\n"
+            f"🤖 <b>Bot:</b> @{me.username}\n"
+            f"🏷 <b>Version:</b> 1.0.0\n"
+            f"📌 <b>Commit:</b> <code>{commit_hash}</code>\n"
+            f"🗄 <b>Database:</b> Connected ({db_type})\n"
+            f"⚡ <b>Redis:</b> {redis_desc}\n"
+            f"🎬 <b>TMDB:</b> {'Configured ✅' if settings.TMDB_API_KEY else 'Missing ⚠️ (upcoming discovery limited)'}\n"
+            f"🌐 <b>Mode:</b> {'Webhook' if settings.WEBHOOK_MODE else 'Long Polling'}\n"
+            f"⏱ <b>Direct IP Cap:</b> {'Active (>=5.0s)' if not settings.proxy_list_parsed else 'Proxied'}"
+        )
+        try:
+            await bot.send_message(chat_id=settings.ADMIN_ID, text=admin_startup_msg, parse_mode="HTML")
+        except Exception as se:
+            logger.debug(f"Could not deliver startup message to admin {settings.ADMIN_ID}: {se}")
+    except Exception as be:
+        logger.warning(f"Could not verify Telegram bot via getMe: {be}")
+
+    # 4. Start adaptive polling scheduler
     await scheduler.start()
 
-    # 4. Webhook vs Polling mode
+    # 5. Webhook vs Polling mode
     if settings.WEBHOOK_MODE and settings.WEBHOOK_URL:
         full_webhook_url = f"{settings.WEBHOOK_URL.rstrip('/')}{settings.WEBHOOK_PATH}"
         logger.info(f"Setting Telegram webhook to: {full_webhook_url}")
@@ -116,32 +169,52 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """System health check verifying database and platforms."""
-    # Check DB
+    """Cheap system health check (no DB/Redis hits) for UptimeRobot and load balancers."""
+    return {
+        "status": "healthy",
+        "service": "TicketNotify",
+        "scheduler_running": scheduler._running,
+    }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness probe verifying database and Redis connectivity."""
     db_ok = False
+    db_error = None
     try:
         async with get_db_session() as session:
             await session.scalar(select(1))
         db_ok = True
     except Exception as e:
-        logger.error(f"Health check DB failure: {e}")
+        db_error = str(e)
+        logger.error(f"Readiness check DB error: {e}")
 
-    # Check platforms
-    platform_health = await registry.health_check_all()
-    circuit_statuses = registry.get_circuit_statuses()
+    redis_ok, redis_desc = await check_redis_health()
+    is_ready = db_ok and redis_ok
 
-    status_code = status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+    status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(
         status_code=status_code,
         content={
-            "status": "healthy" if db_ok else "unhealthy",
-            "database": "connected" if db_ok else "disconnected",
+            "status": "ready" if is_ready else "not_ready",
+            "database": "connected" if db_ok else f"error: {db_error}",
+            "redis": redis_desc,
             "scheduler_running": scheduler._running,
-            "platforms": platform_health,
-            "circuit_breakers": circuit_statuses,
         },
     )
+
+
+@app.get("/api/platforms/status")
+async def platform_status():
+    """Platform adapter health check and circuit breaker inspection."""
+    platform_health = await registry.health_check_all()
+    circuit_statuses = registry.get_circuit_statuses()
+    return {
+        "platforms": platform_health,
+        "circuit_breakers": circuit_statuses,
+    }
 
 
 @app.get("/metrics")

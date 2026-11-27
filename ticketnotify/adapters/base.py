@@ -91,6 +91,8 @@ class Cinema(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     chain: Optional[str] = None  # PVR, INOX, Cinepolis, MovieMax, etc.
+    locality: Optional[str] = None
+    mall: Optional[str] = None
     address: Optional[str] = None
     distance_km: Optional[float] = None
     extra_metadata: Dict[str, Any] = Field(default_factory=dict)

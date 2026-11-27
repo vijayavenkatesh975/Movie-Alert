@@ -77,25 +77,45 @@ def get_platform_selection_keyboard(
 
 def get_filter_builder_keyboard(current_filters: dict) -> InlineKeyboardMarkup:
     formats = current_filters.get("formats", [])
+    has_2d = "2D" in [f.upper() for f in formats]
     has_imax = "IMAX" in [f.upper() for f in formats]
     has_3d = "3D" in [f.upper() for f in formats]
     has_4dx = "4DX" in [f.upper() for f in formats]
 
+    languages = current_filters.get("languages", [])
+    has_tam = "TAMIL" in [l.upper() for l in languages]
+    has_eng = "ENGLISH" in [l.upper() for l in languages]
+    has_hin = "HINDI" in [l.upper() for l in languages]
+    has_tel = "TELUGU" in [l.upper() for l in languages]
+
+    date_win = (current_filters.get("date_window") or "any").title()
+    time_win = (current_filters.get("time_slot") or "any").title()
+
     buttons = [
+        # Formats
         [
+            InlineKeyboardButton(text=f"{'✅' if has_2d else '◻️'} 2D", callback_data="toggle_filter:fmt_2d"),
             InlineKeyboardButton(text=f"{'✅' if has_imax else '◻️'} IMAX", callback_data="toggle_filter:fmt_imax"),
             InlineKeyboardButton(text=f"{'✅' if has_3d else '◻️'} 3D", callback_data="toggle_filter:fmt_3d"),
             InlineKeyboardButton(text=f"{'✅' if has_4dx else '◻️'} 4DX", callback_data="toggle_filter:fmt_4dx"),
         ],
+        # Languages
         [
-            InlineKeyboardButton(text="🎯 All Formats (Default)", callback_data="toggle_filter:fmt_all"),
+            InlineKeyboardButton(text=f"{'✅' if has_tam else '◻️'} Tamil", callback_data="toggle_filter:lang_tamil"),
+            InlineKeyboardButton(text=f"{'✅' if has_eng else '◻️'} English", callback_data="toggle_filter:lang_eng"),
+            InlineKeyboardButton(text=f"{'✅' if has_hin else '◻️'} Hindi", callback_data="toggle_filter:lang_hindi"),
+            InlineKeyboardButton(text=f"{'✅' if has_tel else '◻️'} Telugu", callback_data="toggle_filter:lang_telugu"),
+        ],
+        # Date & Time window
+        [
+            InlineKeyboardButton(text=f"📅 Date: {date_win}", callback_data="toggle_filter:cycle_date"),
+            InlineKeyboardButton(text=f"🕒 Time: {time_win}", callback_data="toggle_filter:cycle_time"),
         ],
         [
-            InlineKeyboardButton(text="💰 Max Price: " + (f"₹{current_filters.get('max_price')}" if current_filters.get('max_price') else "Any"), callback_data="set_max_price"),
-            InlineKeyboardButton(text="🪑 Min Seats: " + str(current_filters.get('min_seats', 'Any')), callback_data="set_min_seats"),
+            InlineKeyboardButton(text="🎯 All Filters Reset", callback_data="toggle_filter:fmt_all"),
         ],
         [
-            InlineKeyboardButton(text="✅ Done / Confirm Tracking", callback_data="filters_done"),
+            InlineKeyboardButton(text="✅ Done / Continue to Seats", callback_data="filters_done"),
         ],
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_flow")],
     ]
@@ -159,6 +179,11 @@ def get_theatres_selection_keyboard(
         InlineKeyboardButton(text="🔍 Search Name/Mall", callback_data=f"th_act:search:{page}"),
     ])
 
+    # Refresh from platforms
+    buttons.append([
+        InlineKeyboardButton(text="🔄 Refresh Theatres Live", callback_data=f"th_act:refresh:{page}"),
+    ])
+
     # Done / Confirm
     count_str = f" ({len(selected_ids)} Selected)" if selected_ids else " (All Theatres in City)"
     buttons.append([
@@ -209,8 +234,12 @@ def get_seat_preferences_keyboard(prefs: dict) -> InlineKeyboardMarkup:
     row = prefs.get("row_zone", "any").title()
     col = prefs.get("column_zone", "any").title()
     cat = prefs.get("seat_category", "any").title()
+    mode = prefs.get("seat_mode", "zone").title()
 
     buttons = [
+        [
+            InlineKeyboardButton(text=f"⚙️ Mode: {mode} Mode", callback_data="seat_toggle_mode"),
+        ],
         [
             InlineKeyboardButton(text=f"💺 Seats: {needed}", callback_data="seat_cycle_needed"),
             InlineKeyboardButton(text=f"🔗 Consecutive: {consec}", callback_data="seat_toggle_consec"),
@@ -325,14 +354,16 @@ def get_discovery_catalog_keyboard(
     buttons = []
     # 1. Action buttons for movies on the current page
     for m in movies:
-        safe_title = m["title"][:22].strip()
-        is_now = m.get("is_now_showing", False)
-        prefix = "📊 Track" if is_now else "🚨 Alert"
+        safe_title = m["title"][:18].strip()
         buttons.append([
             InlineKeyboardButton(
-                text=f"{prefix} '{safe_title}'",
+                text=f"🚨 Alert '{safe_title}'",
                 callback_data=f"disc_open:{m['title'][:25]}",
-            )
+            ),
+            InlineKeyboardButton(
+                text="ℹ️ Details",
+                callback_data=f"disc_det:{m['title'][:25]}",
+            ),
         ])
 
     # 2. Pagination controls

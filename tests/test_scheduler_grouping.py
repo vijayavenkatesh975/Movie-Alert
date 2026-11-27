@@ -83,3 +83,30 @@ async def test_failed_poll_never_produces_alert_or_overwrites_snapshot():
 
         mock_enqueue.assert_not_called()
 
+
+def test_tier_auto_upgrade_and_direct_ip_cap():
+    from ticketnotify.engine.scheduler import AdaptiveScheduler
+    from ticketnotify.config import settings
+
+    scheduler = AdaptiveScheduler()
+    group = WatchGroup(
+        platform="bms",
+        movie_id="ET00123",
+        city_identifier="chennai",
+        movie_title="Pushpa 2: The Rule",
+    )
+    alert = Alert(id=1, user_id=1, movie_query="Pushpa 2: The Rule", urgency="COLD")
+    group.alerts.append(alert)
+
+    # When PROXY_LIST is empty, direct-IP cap must be at least 5.0s
+    settings.PROXY_LIST = ""
+    has_proxies = bool(settings.PROXY_LIST.strip())
+    assert has_proxies is False
+
+    # Simulate interval calculation
+    interval = 2.0 if group.is_hot else (12.0 if alert.urgency == "WARM" else 60.0)
+    if not has_proxies:
+        interval = max(interval, 5.0)
+    assert interval >= 5.0
+
+

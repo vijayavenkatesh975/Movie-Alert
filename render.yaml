@@ -2,6 +2,8 @@ services:
   - type: web
     name: ticketnotify-bot
     runtime: python
+    region: singapore
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
     healthCheckPath: /health
@@ -9,20 +11,28 @@ services:
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_ID
-        value: 1483331491
+        value: "1483331491"
+      - key: TMDB_API_KEY
+        sync: false
       - key: DATABASE_URL
         value: sqlite+aiosqlite:///./ticketnotify.db
+      - key: REDIS_URL
+        value: redis://localhost:6379/0
+      - key: USE_IN_MEMORY_REDIS_FALLBACK
+        value: "true"
       - key: WEBHOOK_MODE
-        value: false
+        value: "false"
       - key: PORT
-        value: 10000
+        value: "10000"
       - key: TZ
         value: Asia/Kolkata
       - key: LOG_LEVEL
         value: INFO
       - key: HOT_POLL_INTERVAL
-        value: 15
+        value: "20"
       - key: IDLE_POLL_INTERVAL
-        value: 120
+        value: "150"
       - key: USER_AGENT_ROTATION
-        value: true
+        value: "true"
+      - key: PROXY_LIST
+        sync: false

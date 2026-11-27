@@ -1,9 +1,12 @@
 """Alert management handlers: /list, /remove, and inline controls."""
 
 import asyncio
+import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
+
+logger = logging.getLogger(__name__)
 
 from ticketnotify.database.session import get_db_session
 from ticketnotify.database.crud import (
@@ -304,3 +307,89 @@ async def on_delete_alert(query: CallbackQuery):
 
     await query.message.edit_text("🗑 *Alert deleted and monitoring stopped.*", parse_mode="Markdown")
     await query.answer("Alert removed.")
+
+
+@router.message(Command("history"))
+async def handle_history_command(message: Message):
+    """Shows the last 20 notifications the user received with timestamps and details."""
+    async with get_db_session() as session:
+        user = await get_user_by_telegram_id(session, message.from_user.id)
+        if not user:
+            await message.answer("Please send /start to set up your account first.")
+            return
+        from ticketnotify.database.crud import get_user_notification_history
+        logs = await get_user_notification_history(session, user.id, limit=20)
+
+    if not logs:
+        await message.answer(
+            "📜 *No Notification History Yet*\n\n"
+            "When bookings open, new shows are added, or ticket statuses change for your tracked movies, "
+            "your recent notifications will appear here with timestamps.",
+            parse_mode="Markdown",
+        )
+        return
+
+    type_badges = {
+        "bookings_opened": "🚨 *BOOKINGS OPENED*",
+        "new_show_added": "✨ *NEW SHOW ADDED*",
+        "seats_filling_fast": "⚡ *FILLING FAST*",
+        "price_drop": "📉 *PRICE DROP*",
+        "preferred_seats_available": "💺 *SEATS MATCHED*",
+        "sold_out": "🔴 *SOLD OUT*",
+    }
+
+    lines = [f"📜 *Recent Notifications (Last {len(logs)}):*\n"]
+    for idx, log in enumerate(logs, 1):
+        ts = log.sent_at.strftime("%d %b %I:%M %p UTC")
+        badge = type_badges.get(log.notification_type, "🎬 *ALERT*")
+        plat = log.platform.upper()
+        movie_title = log.alert.movie_query if log.alert else "Movie"
+        lines.append(f"{idx}. {badge} — *{movie_title}* [{plat}]\n   🕒 _{ts}_")
+
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+
+@router.callback_query(F.data.startswith("fb_wrong:"))
+async def on_wrong_info_feedback(query: CallbackQuery):
+    """Handles 'Wrong info?' user feedback on notifications."""
+    parts = query.data.split(":")
+    alert_id = parts[1] if len(parts) > 1 else "unknown"
+    platform = parts[2] if len(parts) > 2 else "unknown"
+
+    logger.info(f"User {query.from_user.id} reported wrong info on Alert #{alert_id} ({platform})")
+
+    # Notify admin
+    try:
+        from ticketnotify.config import settings
+        admin_report = (
+            f"⚠️ <b>User Feedback: Wrong Info Reported</b>\n\n"
+            f"👤 <b>User:</b> {query.from_user.full_name} (ID: <code>{query.from_user.id}</code>)\n"
+            f"🔔 <b>Alert ID:</b> #{alert_id}\n"
+            f"🏷 <b>Platform:</b> {platform.upper()}\n"
+            f"💬 <i>User indicated show data or seat status was inaccurate.</i>"
+        )
+        await query.bot.send_message(chat_id=settings.ADMIN_ID, text=admin_report, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"Could not forward wrong info report to admin: {e}")
+
+    await query.answer(
+        "🙏 Thank you for the feedback! Our engineers and scrapers have been notified to re-verify this cinema & showtime.",
+        show_alert=True,
+    )
+
+
+@router.callback_query(F.data.startswith("keep_alert:"))
+async def on_keep_alert(query: CallbackQuery):
+    """Keeps an alert active when prompted post-release."""
+    await query.message.edit_text("✅ *Alert kept active.* We will continue monitoring showtimes.", parse_mode="Markdown")
+    await query.answer("Kept tracking.")
+
+
+@router.callback_query(F.data.startswith("archive_alert:"))
+async def on_archive_alert(query: CallbackQuery):
+    """Archives an alert when prompted post-release."""
+    alert_id = int(query.data.split(":")[1])
+    async with get_db_session() as session:
+        await update_alert_status(session, alert_id, "archived")
+    await query.message.edit_text("📦 *Alert archived.* You can view or re-enable it anytime.", parse_mode="Markdown")
+    await query.answer("Alert archived.")

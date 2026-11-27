@@ -7,6 +7,7 @@ and robust cross-platform canonical ID deduplication.
 import asyncio
 import hashlib
 import logging
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Set
 from pydantic import BaseModel, Field
 import rapidfuzz
@@ -154,6 +155,10 @@ def merge_theatres(
                 matched.distance_km = min(matched.distance_km, c.distance_km)
             if not matched.address and c.address:
                 matched.address = c.address
+            if not matched.locality and c.locality:
+                matched.locality = c.locality
+            if not matched.mall and c.mall:
+                matched.mall = c.mall
         else:
             chain = c.chain or extract_chain_from_name(c.name)
             cid = generate_canonical_id(c.name, c.city, c.latitude, c.longitude)
@@ -162,6 +167,8 @@ def merge_theatres(
                 name=c.name,
                 city=c.city,
                 chain=chain,
+                locality=c.locality,
+                mall=c.mall,
                 latitude=c.latitude,
                 longitude=c.longitude,
                 distance_km=c.distance_km,
@@ -179,17 +186,102 @@ async def get_theatres_for_location(
     location: NormalizedLocation,
     platforms: Optional[List[str]] = None,
     radius_km: Optional[float] = None,
+    force_refresh: bool = False,
 ) -> List[MergedCinema]:
     """Fetches all cinemas operating in the user's city across all platforms.
 
-    If radius_km is None, returns ALL theatres in the city without radius filtering.
-    Integrates master city directory records to guarantee complete coverage.
+    Queries platform endpoints live, caches results in DB/Redis with 12h TTL,
+    uses master directory as canonical metadata merge source, logs unmapped cinemas,
+    and supports force refresh.
     """
     city_name = location.city or "Chennai"
+
+    # 1. Cache lookup if not force_refresh
+    if not force_refresh:
+        # Check Redis cache first (12h TTL)
+        try:
+            from ticketnotify.cache.redis import cache_get
+            raw_cached = await cache_get(f"theatres:{city_name.lower()}")
+            if raw_cached:
+                items = json.loads(raw_cached)
+                return [MergedCinema(**item) for item in items]
+        except Exception as e:
+            logger.debug(f"Redis cache lookup error: {e}")
+
+        try:
+            from ticketnotify.database.session import get_db_session
+            from ticketnotify.database.models import CachedTheatres
+            from sqlalchemy import select
+
+            async with get_db_session() as session:
+                cached_row = await session.scalar(
+                    select(CachedTheatres).where(CachedTheatres.city == city_name)
+                )
+                if cached_row and (datetime.utcnow() - cached_row.fetched_at).total_seconds() < 43200:
+                    cached_theatres = [MergedCinema(**item) for item in cached_row.theatres_json]
+                    if cached_theatres:
+                        return cached_theatres
+        except Exception as e:
+            logger.debug(f"Cache lookup failed for {city_name}: {e}")
+    else:
+        try:
+            from ticketnotify.cache.redis import cache_delete
+            await cache_delete(f"theatres:{city_name.lower()}")
+        except Exception as e:
+            logger.debug(f"Redis cache delete error: {e}")
+
     all_cinemas: List[Cinema] = []
 
-    # 1. Seed with verified master directory for this city
+    # 2. Query live platform adapters
+    active_platforms = platforms or location.supported_platforms or ["bms", "ticketnew", "district", "pvrinox"]
+    tasks = []
+    effective_radius = radius_km if radius_km is not None else 50.0
+
+    for p in active_platforms:
+        adapter = registry.get_adapter(p)
+        if adapter and adapter.is_location_supported(location):
+            tasks.append(adapter.get_cinemas(location, radius_km=effective_radius))
+
+    live_cinemas: List[Cinema] = []
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, list):
+                live_cinemas.extend(r)
+            elif isinstance(r, Exception):
+                logger.debug(f"Platform cinema query exception: {r}")
+
     directory_theatres = get_theatres_by_city(city_name)
+    dir_lookup = {dt["name"].lower(): dt for dt in directory_theatres}
+
+    # Process live cinemas: audit against master directory
+    for c in live_cinemas:
+        matched = False
+        for d_name, d_info in dir_lookup.items():
+            if rapidfuzz.fuzz.token_set_ratio(c.name.lower(), d_name) >= 80:
+                matched = True
+                if not getattr(c, "locality", None) and d_info.get("locality"):
+                    c.locality = d_info["locality"]
+                if not getattr(c, "chain", None) and d_info.get("chain"):
+                    c.chain = d_info["chain"]
+                if not c.latitude and d_info.get("latitude"):
+                    c.latitude = d_info["latitude"]
+                if not c.longitude and d_info.get("longitude"):
+                    c.longitude = d_info["longitude"]
+                break
+        if not matched:
+            logger.warning(
+                f"UNMAPPED CINEMA DISCOVERED: '{c.name}' in {c.city} [{c.platform}:{c.cinema_id}] - logged for review"
+            )
+            # Infer locality if missing
+            if not getattr(c, "locality", None):
+                parts = c.name.replace("–", "-").split("-")
+                if len(parts) > 1:
+                    c.locality = parts[-1].strip()
+
+        all_cinemas.append(c)
+
+    # 3. Seed canonical directory records (as metadata/canonical merge source)
     for dt in directory_theatres:
         lat = dt.get("latitude")
         lng = dt.get("longitude")
@@ -199,7 +291,6 @@ async def get_theatres_for_location(
             if radius_km is not None and dist > radius_km:
                 continue
 
-        # Add an entry per platform mapping
         p_cids = dt.get("platform_cinema_ids", {})
         for plat, cid in p_cids.items():
             all_cinemas.append(
@@ -216,29 +307,10 @@ async def get_theatres_for_location(
                 )
             )
 
-    # 2. Query live platform adapters
-    active_platforms = platforms or location.supported_platforms or ["bms", "ticketnew", "district", "pvrinox"]
-    tasks = []
-    effective_radius = radius_km if radius_km is not None else 50.0  # Large boundary for city retrieval
-
-    for p in active_platforms:
-        adapter = registry.get_adapter(p)
-        if adapter and adapter.is_location_supported(location):
-            tasks.append(adapter.get_cinemas(location, radius_km=effective_radius))
-
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, list):
-                all_cinemas.extend(r)
-            elif isinstance(r, Exception):
-                logger.debug(f"Platform cinema query exception: {r}")
-
-    # 3. Deduplicate across platforms
+    # 4. Deduplicate across platforms
     merged = merge_theatres(all_cinemas, max_distance_meters=300.0)
 
     # Populate locality and mall from directory records if matched
-    dir_lookup = {dt["name"].lower(): dt for dt in directory_theatres}
     for m in merged:
         for d_name, d_info in dir_lookup.items():
             if rapidfuzz.fuzz.token_set_ratio(m.name.lower(), d_name) >= 80:
@@ -247,6 +319,39 @@ async def get_theatres_for_location(
                 if not m.mall and d_info.get("mall"):
                     m.mall = d_info["mall"]
                 break
+
+    # 5. Store into CachedTheatres & Redis (12h TTL)
+    try:
+        from ticketnotify.cache.redis import cache_set
+        theatres_payload = [m.model_dump() for m in merged]
+        await cache_set(f"theatres:{city_name.lower()}", json.dumps(theatres_payload), ttl_seconds=12 * 3600)
+    except Exception as e:
+        logger.debug(f"Saving to Redis cache failed: {e}")
+
+    try:
+        from ticketnotify.database.session import get_db_session
+        from ticketnotify.database.models import CachedTheatres
+        from sqlalchemy import select
+
+        async with get_db_session() as session:
+            existing_row = await session.scalar(
+                select(CachedTheatres).where(CachedTheatres.city == city_name)
+            )
+            theatres_payload = [m.model_dump() for m in merged]
+            if existing_row:
+                existing_row.theatres_json = theatres_payload
+                existing_row.fetched_at = datetime.utcnow()
+            else:
+                session.add(
+                    CachedTheatres(
+                        city=city_name,
+                        theatres_json=theatres_payload,
+                        fetched_at=datetime.utcnow(),
+                    )
+                )
+            await session.commit()
+    except Exception as e:
+        logger.debug(f"Saving to CachedTheatres failed: {e}")
 
     return merged
 

@@ -88,3 +88,59 @@ def test_theatres_sorted_by_distance():
 
     merged = merge_theatres([c_far, c_near, c_mid])
     assert [m.name for m in merged] == ["Near Cinema", "Mid Cinema", "Far Cinema"]
+
+
+@pytest.mark.asyncio
+async def test_live_theatre_discovery_caching_and_unmapped(monkeypatch):
+    """Verifies that theatres are queried live, unmapped cinemas are logged and kept,
+    and 12-hour caching / force_refresh works properly.
+    """
+    from unittest.mock import AsyncMock
+    from ticketnotify.location.models import NormalizedLocation
+    from ticketnotify.location.theatre_merger import get_theatres_for_location
+    from ticketnotify.database.session import init_db
+    from ticketnotify.adapters.registry import registry
+
+    await init_db()
+
+    norm_loc = NormalizedLocation(
+        raw_query="Madurai",
+        city="Madurai",
+        country="India",
+        country_code="in",
+        latitude=9.9252,
+        longitude=78.1198,
+        display_name="Madurai, India",
+    )
+
+    unmapped_cinema = Cinema(
+        cinema_id="LIVE_MDU_01",
+        platform="ticketnew",
+        name="Vetri Cinemas - Villapuram",
+        city="Madurai",
+        latitude=9.9123,
+        longitude=78.1345,
+        address="Villapuram Main Rd, Madurai",
+    )
+
+    mock_adapter = AsyncMock()
+    mock_adapter.is_location_supported = lambda loc: True
+    mock_adapter.get_cinemas.return_value = [unmapped_cinema]
+
+    monkeypatch.setattr(registry, "get_adapter", lambda p: mock_adapter if p == "ticketnew" else None)
+
+    # 1. First fetch: live discovery
+    results = await get_theatres_for_location(norm_loc, platforms=["ticketnew"], force_refresh=True)
+    assert any("Vetri Cinemas" in t.name for t in results)
+    vetri = next(t for t in results if "Vetri Cinemas" in t.name)
+    assert vetri.locality == "Villapuram"
+
+    # 2. Second fetch without force_refresh: should hit cache
+    mock_adapter.get_cinemas.reset_mock()
+    cached_results = await get_theatres_for_location(norm_loc, platforms=["ticketnew"], force_refresh=False)
+    assert any("Vetri Cinemas" in t.name for t in cached_results)
+    assert mock_adapter.get_cinemas.call_count == 0
+
+    # 3. Third fetch with force_refresh: calls adapter again
+    await get_theatres_for_location(norm_loc, platforms=["ticketnew"], force_refresh=True)
+    assert mock_adapter.get_cinemas.call_count == 1

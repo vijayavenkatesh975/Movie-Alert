@@ -204,8 +204,16 @@ class TelegramNotifier:
             f"🏷 Platform: *{platform_display}*"
         )
 
+        import urllib.parse
+        movie_encoded = urllib.parse.quote_plus(show.movie_title)
+        share_url = f"https://t.me/share/url?url=https://t.me/Tickets_NotifyBot?start=track_{movie_encoded}&text=Track%20tickets%20for%20{movie_encoded}%20on%20@Tickets_NotifyBot!"
+
         buttons = [
             [InlineKeyboardButton(text="🎟 Book Now", url=show.booking_url)],
+            [
+                InlineKeyboardButton(text="👥 Alert a Friend", url=share_url),
+                InlineKeyboardButton(text="⚠️ Wrong info?", callback_data=f"fb_wrong:{item.alert_id}:{item.platform}"),
+            ],
             [
                 InlineKeyboardButton(text="🔕 Mute Alert", callback_data=f"mute:{item.alert_id}"),
                 InlineKeyboardButton(text="🛑 Stop Tracking", callback_data=f"stop:{item.alert_id}"),

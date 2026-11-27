@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
 
 
 class SeatStatus(str, Enum):
@@ -286,3 +286,137 @@ def find_seat_groups(layout: SeatLayout, prefs: SeatPrefs) -> List[SeatGroup]:
     # Sort descending by score
     groups.sort(key=lambda g: g.score, reverse=True)
     return groups
+
+
+def parse_layout_dict(layout_dict: Dict[str, Any]) -> SeatLayout:
+    """Parses a versioned platform screen layout dictionary into a SeatLayout model."""
+    if not layout_dict:
+        return SeatLayout(total_rows=0, total_cols=0, seats=[], screen_name="Screen")
+
+    screen_name = layout_dict.get("screen_name", "Screen 1")
+    raw_rows = layout_dict.get("rows", [])
+    total_rows = len(raw_rows)
+    total_cols = 0
+    parsed_seats: List[Seat] = []
+
+    for r_idx, row in enumerate(raw_rows):
+        r_label = row.get("row_letter") or row.get("row_label") or str(r_idx + 1)
+        r_cat = row.get("category", "Standard")
+        raw_seats = row.get("seats", [])
+        total_cols = max(total_cols, len(raw_seats))
+
+        for c_idx, s in enumerate(raw_seats):
+            num = str(s.get("number") or s.get("seat_label") or (c_idx + 1))
+            label = num if (num.startswith(r_label) or not num.isdigit()) else f"{r_label}{num}"
+            raw_status = str(s.get("status", "AVAILABLE")).upper()
+            status = SeatStatus.AVAILABLE if "AVAIL" in raw_status else SeatStatus.BOOKED
+
+            parsed_seats.append(
+                Seat(
+                    row_index=r_idx,
+                    col_index=s.get("col", c_idx + 1),
+                    row_label=r_label,
+                    seat_label=label,
+                    status=status,
+                    category=s.get("category", r_cat),
+                    price=float(s.get("price", 250.0)),
+                    is_aisle=bool(s.get("is_aisle", False)),
+                )
+            )
+
+    return SeatLayout(
+        total_rows=total_rows,
+        total_cols=total_cols,
+        seats=parsed_seats,
+        screen_name=screen_name,
+    )
+
+
+def generate_text_seat_map(layout: Union[SeatLayout, Dict[str, Any]], max_rows: int = 15, max_cols: int = 24) -> str:
+    """Generates a text/ASCII seat map with row letters, seat numbers,
+    and rows grouped into Front, Middle, and Back thirds.
+    """
+    if isinstance(layout, dict):
+        layout = parse_layout_dict(layout)
+
+    if not layout or not layout.seats:
+        return "ℹ️ No screen layout is cached yet for this theatre."
+
+    total_rows = layout.total_rows
+    seats_by_row: Dict[int, List[Seat]] = {}
+    for s in layout.seats:
+        seats_by_row.setdefault(s.row_index, []).append(s)
+
+    lines = [
+        "🎬 ──────── SCREEN THIS WAY ──────── 🎬",
+        "",
+    ]
+
+    third = total_rows / 3.0
+    current_zone = None
+
+    for r_idx in sorted(seats_by_row.keys(), reverse=True):
+        if r_idx >= 2.0 * third:
+            zone_name = "🔙 BACK THIRD"
+        elif r_idx >= third:
+            zone_name = "↔️ MIDDLE THIRD"
+        else:
+            zone_name = "🔜 FRONT THIRD"
+
+        if zone_name != current_zone:
+            current_zone = zone_name
+            lines.append(f"[{current_zone}]")
+
+        row_seats = sorted(seats_by_row[r_idx], key=lambda x: x.col_index)
+        row_label = row_seats[0].row_label if row_seats else f"R{r_idx}"
+
+        seat_tokens = []
+        for s in row_seats[:max_cols]:
+            if s.is_available:
+                seat_tokens.append(f"[{s.seat_label}]")
+            else:
+                seat_tokens.append("[❌]")
+
+        lines.append(f"{row_label:2s}: {' '.join(seat_tokens)}")
+
+    lines.append("")
+    lines.append("Legend: [H9]=Available  [❌]=Booked/Blocked")
+    return "\n".join(lines)
+
+
+def match_exact_seats(
+    layout: Union[SeatLayout, Dict[str, Any]],
+    target_seats: List[str],
+) -> Tuple[bool, List[Seat], List[SeatGroup]]:
+    """Evaluates whether all requested exact seats are free.
+
+    If all target seats are available: returns (True, matched_seats, []).
+    If any target seat is taken: returns (False, available_target_seats, alternative_groups).
+    """
+    if isinstance(layout, dict):
+        layout = parse_layout_dict(layout)
+
+    if not layout or not layout.seats or not target_seats:
+        return (False, [], [])
+
+    target_set = {s.strip().upper() for s in target_seats}
+    matched: List[Seat] = []
+    missing_or_booked: List[str] = []
+
+    for s in layout.seats:
+        lbl = s.seat_label.strip().upper()
+        if lbl in target_set:
+            if s.is_available:
+                matched.append(s)
+            else:
+                missing_or_booked.append(lbl)
+
+    all_matched = (len(matched) == len(target_set)) and (len(missing_or_booked) == 0)
+
+    alternatives: List[SeatGroup] = []
+    if not all_matched:
+        prefs = SeatPrefs(seats_needed=len(target_seats), must_be_consecutive=True)
+        alternatives = find_seat_groups(layout, prefs)[:3]
+
+    return (all_matched, matched, alternatives)
+

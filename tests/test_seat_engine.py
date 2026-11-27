@@ -130,3 +130,64 @@ def test_orphan_seat_penalty_ranks_cleaner_group_higher():
     # Top group should not be the one leaving a single orphan
     top_group = groups[0]
     assert top_group.row_label != "A"  # Row A had the orphan condition
+
+
+def test_generate_text_seat_map():
+    from ticketnotify.engine.seat_engine import generate_text_seat_map
+
+    layout = _build_test_layout(rows=6, cols=8)
+    map_str = generate_text_seat_map(layout)
+    assert "SCREEN THIS WAY" in map_str
+    assert "FRONT THIRD" in map_str
+    assert "MIDDLE THIRD" in map_str
+    assert "BACK THIRD" in map_str
+    assert "[A1]" in map_str
+
+
+def test_match_exact_seats_all_available():
+    from ticketnotify.engine.seat_engine import match_exact_seats
+
+    layout = _build_test_layout(rows=6, cols=8)
+    # Target seats: C3, C4, C5
+    all_matched, matched, alternatives = match_exact_seats(layout, ["C3", "C4", "C5"])
+    assert all_matched is True
+    assert len(matched) == 3
+    assert [s.seat_label for s in matched] == ["C3", "C4", "C5"]
+    assert len(alternatives) == 0
+
+
+def test_match_exact_seats_with_fallback_alternatives():
+    from ticketnotify.engine.seat_engine import match_exact_seats
+
+    layout = _build_test_layout(rows=6, cols=8)
+    grid = layout.get_grid()
+    # Book C4
+    grid[(2, 3)].status = SeatStatus.BOOKED  # C4 is row 2, col 3
+
+    all_matched, matched, alternatives = match_exact_seats(layout, ["C3", "C4", "C5"])
+    assert all_matched is False
+    assert len(matched) == 2  # C3 and C5 are available, but C4 is booked
+    # Falls back to nearest alternative groups
+    assert len(alternatives) > 0
+    assert len(alternatives[0].seat_labels) == 3
+
+
+@pytest.mark.asyncio
+async def test_screen_layout_cache_db():
+    from ticketnotify.database.session import init_db, get_db_session
+    from ticketnotify.database.crud import save_screen_layout, get_cached_screen_layout
+
+    await init_db()
+    async with get_db_session() as session:
+        layout_dict = {
+            "total_rows": 5,
+            "total_cols": 8,
+            "screen_name": "Audi 1",
+            "categories": {"Prime": 250.0},
+        }
+        await save_screen_layout(session, "pvrinox", "PVR_VEL_01", "Audi 1", layout_dict)
+        retrieved = await get_cached_screen_layout(session, "pvrinox", "PVR_VEL_01", "Audi 1")
+        assert retrieved is not None
+        assert retrieved["screen_name"] == "Audi 1"
+        assert retrieved["total_rows"] == 5
+

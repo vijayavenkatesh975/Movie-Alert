@@ -7,6 +7,9 @@ movies between categories based on release status, and provides rich metadata wi
 import logging
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
+import rapidfuzz
+
+from ticketnotify.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -374,3 +377,83 @@ def get_coming_soon_movies(city: str = "Bengaluru", country: str = "in") -> List
 
 def get_now_showing_movies(city: str = "Bengaluru", country: str = "in") -> List[Dict[str, Any]]:
     return get_movie_catalog_by_category("now_showing", city=city)
+
+
+async def fetch_tmdb_upcoming(api_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Fetches upcoming movies in Indian region from TMDB API if key is provided."""
+    key = api_key or getattr(settings, "TMDB_API_KEY", None)
+    if not key:
+        return []
+
+    try:
+        from ticketnotify.adapters.http_client import http_client
+        url = "https://api.themoviedb.org/3/movie/upcoming"
+        params = {"api_key": key, "region": "IN", "page": 1}
+        data = await http_client.get_json(url, params=params, timeout=5.0)
+        results = data.get("results", []) if isinstance(data, dict) else []
+        lang_names = {
+            "en": "English", "ta": "Tamil", "te": "Telugu",
+            "hi": "Hindi", "kn": "Kannada", "ml": "Malayalam",
+        }
+        tmdb_movies = []
+        for item in results:
+            title = item.get("title")
+            r_date = item.get("release_date")
+            if not title or not r_date:
+                continue
+            orig_lang = item.get("original_language", "en")
+            languages = [lang_names.get(orig_lang, orig_lang.upper())]
+            tmdb_movies.append({
+                "title": title,
+                "release_date": r_date,
+                "languages": languages,
+                "formats": ["2D", "IMAX"],
+                "genre": "Upcoming Feature",
+                "synopsis": item.get("overview") or f"{title} upcoming theatrical release.",
+                "poster_url": f"https://image.tmdb.org/t/p/w500{item.get('poster_path')}" if item.get("poster_path") else None,
+                "booking_status": "Coming Soon",
+            })
+        return tmdb_movies
+    except Exception as e:
+        logger.debug(f"TMDB upcoming fetch failed: {e}")
+        return []
+
+
+def merge_and_dedup_catalogs(local_catalog: List[Dict[str, Any]], tmdb_movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merges and deduplicates movies using fuzzy title + release year."""
+    merged = list(local_catalog)
+    for tm in tmdb_movies:
+        tm_title = tm["title"].lower()
+        tm_year = tm["release_date"][:4] if tm.get("release_date") else ""
+        exists = False
+        for ex in merged:
+            ex_title = ex["title"].lower()
+            ex_year = ex["release_date"][:4] if ex.get("release_date") else ""
+            if rapidfuzz.fuzz.token_set_ratio(tm_title, ex_title) >= 85:
+                if not tm_year or not ex_year or tm_year == ex_year:
+                    exists = True
+                    for lang in tm.get("languages", []):
+                        if lang not in ex.get("languages", []):
+                            ex.setdefault("languages", []).append(lang)
+                    break
+        if not exists:
+            merged.append(tm)
+    return merged
+
+
+def is_upcoming_movie(title: str, catalog: Optional[List[Dict[str, Any]]] = None) -> bool:
+    """Checks if a movie is an upcoming release (date is in the future or not confirmed)."""
+    cat = catalog or MASTER_MOVIE_CATALOG
+    today = get_current_ist_date()
+    for m in cat:
+        if rapidfuzz.fuzz.token_set_ratio(title.lower(), m["title"].lower()) >= 80:
+            r_str = m.get("release_date")
+            if not r_str:
+                return True
+            try:
+                r_date = datetime.strptime(r_str, "%Y-%m-%d").date()
+                return r_date > today
+            except Exception:
+                return True
+    return False
+

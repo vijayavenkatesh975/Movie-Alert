@@ -118,12 +118,20 @@ class Alert(Base):
     selected_cinemas = Column(JSON, default=dict, nullable=False)
 
     # Seat preference fields
+    seat_mode = Column(String(20), default="zone", nullable=False)  # zone | exact
+    exact_seats = Column(JSON, default=list, nullable=False)        # e.g. ["H9", "H10", "H11", "H12"]
     seats_needed = Column(Integer, default=1, nullable=False)
     must_be_consecutive = Column(Boolean, default=True, nullable=False)
     row_zone = Column(String(20), default="any", nullable=False)  # front | middle | back | any
     column_zone = Column(String(20), default="any", nullable=False)  # center | left | right | corner | aisle | any
     seat_category = Column(String(50), default="any", nullable=False)  # Recliner | Premium | Gold | Silver | any
     max_price_per_seat = Column(Float, nullable=True)
+
+    # Detailed filter criteria
+    languages_filter = Column(JSON, default=list, nullable=False)
+    formats_filter = Column(JSON, default=list, nullable=False)
+    time_window_start = Column(String(10), nullable=True)  # e.g. "18:00"
+    time_window_end = Column(String(10), nullable=True)    # e.g. "23:59"
 
     # Urgency tier: "HOT" (1-3s), "WARM" (10-15s), "COLD" (1-2 min)
     urgency = Column(String(20), default="WARM", nullable=False)
@@ -213,3 +221,32 @@ class NotificationLog(Base):
     __table_args__ = (
         Index("idx_notification_dedup", "alert_id", "platform", "payload_hash"),
     )
+
+
+class CachedTheatres(Base):
+    """Cache for city-wide theatre listings with TTL."""
+    __tablename__ = "cached_theatres"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    city = Column(String(120), unique=True, nullable=False, index=True)
+    theatres_json = Column(JSON, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ScreenLayoutCache(Base):
+    """Cache for parsed screen seat layouts (rows, columns, aisles, categories, prices)."""
+    __tablename__ = "screen_layout_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(50), nullable=False, index=True)
+    cinema_id = Column(String(100), nullable=False, index=True)
+    screen_name = Column(String(100), nullable=False, index=True)
+    version = Column(Integer, default=1, nullable=False)
+    layout_json = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_platform_cinema_screen", "platform", "cinema_id", "screen_name", unique=True),
+    )
+
