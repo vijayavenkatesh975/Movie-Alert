@@ -1,6 +1,7 @@
 """Keyboards and inline buttons for TicketNotify bot."""
+from __future__ import annotations
 
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Any, Optional
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
