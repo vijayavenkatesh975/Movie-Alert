@@ -15,8 +15,9 @@ from ticketnotify.database.crud import (
     record_platform_state_failure,
 )
 from ticketnotify.database.models import Alert
+from sqlalchemy import update
 from ticketnotify.adapters.registry import registry
-from ticketnotify.adapters.base import Show
+from ticketnotify.adapters.base import Show, FetchResult
 from ticketnotify.engine.diff_engine import (
     DiffEngine,
     compute_snapshot_hash,
