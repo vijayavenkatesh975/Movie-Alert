@@ -92,6 +92,22 @@ async def init_db() -> None:
                 for col_name, col_def in new_columns:
                     if col_name not in existing_cols:
                         cursor.execute(f"ALTER TABLE alerts ADD COLUMN {col_name} {col_def}")
+
+                # Migrate user table columns
+                cursor.execute("PRAGMA table_info(users)")
+                existing_user_cols = {row[1] for row in cursor.fetchall()}
+                new_user_columns = [
+                    ("selected_theatres", "JSON DEFAULT '{}'"),
+                    ("selected_chains", "JSON DEFAULT '[]'"),
+                    ("notification_preferences", "JSON DEFAULT '{}'"),
+                    ("alerts_paused", "BOOLEAN DEFAULT 0"),
+                    ("snoozed_until", "DATETIME DEFAULT NULL"),
+                    ("non_critical_frequency", "VARCHAR(20) DEFAULT 'instant'"),
+                ]
+                for col_name, col_def in new_user_columns:
+                    if col_name not in existing_user_cols:
+                        cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
+
                 cursor.close()
             await conn.run_sync(_migrate_sqlite_columns)
             

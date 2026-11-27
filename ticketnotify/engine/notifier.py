@@ -100,14 +100,38 @@ class TelegramNotifier:
         if not chat_id:
             return False
 
-        # Database deduplication check
+        user = alert.user
+        # 1. Global User Pause Check
+        if user and getattr(user, "alerts_paused", False):
+            logger.debug(f"User {user.id} has paused all alerts. Suppressing notification.")
+            return False
+
+        # 2. Snooze Check
+        if user and getattr(user, "snoozed_until", None):
+            if datetime.utcnow() < user.snoozed_until:
+                logger.debug(f"User {user.id} has notifications snoozed until {user.snoozed_until}. Suppressing.")
+                return False
+
+        # 3. Notification Category Preferences Check
+        if user and getattr(user, "notification_preferences", None):
+            prefs = user.notification_preferences or {}
+            # If user explicitly turned off this alert type, skip
+            if prefs.get(notification_type) is False:
+                logger.debug(f"User {user.id} disabled notification type '{notification_type}'. Suppressing.")
+                return False
+
+        # 4. Quiet Hours Check for Non-Critical Alerts
+        is_priority = (notification_type == "bookings_opened")
+        if not is_priority and self._is_quiet_hours(user):
+            logger.debug(f"Suppressing non-critical alert '{notification_type}' during quiet hours for user {user.id}.")
+            return False
+
+        # 5. Database deduplication check
         async with get_db_session() as session:
             is_dup = await is_notification_duplicate(session, alert.id, platform, payload_hash)
             if is_dup:
                 logger.debug(f"Skipping duplicate notification for alert {alert.id}, hash {payload_hash}")
                 return False
-
-        is_priority = (notification_type == "bookings_opened")
         item = QueuedNotification(
             alert_id=alert.id,
             user_id=alert.user_id,
@@ -161,6 +185,8 @@ class TelegramNotifier:
             "new_show_added": "✨ *NEW SHOW ADDED*",
             "seats_filling_fast": "⚡ *SEATS FILLING FAST*",
             "price_drop": "📉 *PRICE DROP*",
+            "preferred_seats_available": "💺 *PREFERRED SEATS AVAILABLE*",
+            "release_date_change": "🗓 *RELEASE DATE CHANGED*",
             "specific_cinema_opened": "🏛 *CINEMA OPENED*",
         }
         badge = alert_titles.get(item.notification_type, "🎬 *MOVIE ALERT*")

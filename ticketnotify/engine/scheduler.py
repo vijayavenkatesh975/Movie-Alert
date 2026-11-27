@@ -171,8 +171,29 @@ class AdaptiveScheduler:
 
         t0 = time.time()
         try:
-            # Single HTTP request to platform adapter returning typed FetchResult
-            fetch_res = await registry.get_shows(platform, movie_id, sample_location)
+            # Handle unmapped placeholder movies (e.g. Q_1234567 for upcoming unlisted movies)
+            if movie_id.startswith("Q_"):
+                matches = await registry.search_movie(platform, group.movie_title, sample_location)
+                if matches:
+                    resolved_id = matches[0].movie_id
+                    group.movie_id = resolved_id
+                    movie_id = resolved_id
+                    async with get_db_session() as session:
+                        from sqlalchemy import update
+                        for a in group.alerts:
+                            new_ids = dict(a.movie_ids_by_platform or {})
+                            new_ids[platform] = resolved_id
+                            await session.execute(
+                                update(Alert).where(Alert.id == a.id).values(movie_ids_by_platform=new_ids)
+                            )
+                    fetch_res = await registry.get_shows(platform, movie_id, sample_location)
+                else:
+                    # Movie is not yet listed on platform - normal unlisted / not-open state
+                    fetch_res = FetchResult.ok([], latency_ms=(time.time() - t0) * 1000.0)
+            else:
+                # Single HTTP request to platform adapter returning typed FetchResult
+                fetch_res = await registry.get_shows(platform, movie_id, sample_location)
+
             poll_latency = (time.time() - t0) * 1000.0
             self.metrics["poll_latencies_ms"].append(poll_latency)
             if len(self.metrics["poll_latencies_ms"]) > 100:

@@ -267,23 +267,29 @@ async def confirm_platforms(query: CallbackQuery, state: FSMContext):
     from ticketnotify.location.models import NormalizedLocation
     norm_loc = NormalizedLocation(**loc_dict) if loc_dict else None
 
-    # Step 3.5: Fetch cinemas in radius
+    # Step 3.5: Fetch all cinemas in the city (no radius cutoff)
     theatres: List[MergedCinema] = []
+    default_selected: List[str] = []
     if norm_loc:
-        theatres = await get_theatres_for_location(norm_loc, platforms=selected, radius_km=10.0)
+        theatres = await get_theatres_for_location(norm_loc, platforms=selected, radius_km=None)
+        async with get_db_session() as session:
+            u, _ = await get_or_create_user(session, query.from_user.id)
+            if u and u.selected_theatres:
+                default_selected = u.selected_theatres.get("canonical_ids", [])
 
     await state.update_data(
         theatres_list=[t.dict() for t in theatres],
-        selected_theatre_ids=[],
+        selected_theatre_ids=default_selected,
     )
 
     if theatres:
+        count_msg = f" (Pre-selected your {len(default_selected)} saved favourites)" if default_selected else ""
         await query.message.edit_text(
             f"🏛 *Step 3b: Choose Theatres in {norm_loc.city}*\n\n"
-            f"Found {len(theatres)} theatres within 10 km. "
+            f"Found {len(theatres)} available theatres in the city.{count_msg}\n"
             f"Select specific theatres or tap *Continue* to monitor all:",
             parse_mode="Markdown",
-            reply_markup=get_theatres_selection_keyboard(theatres, set(), page=0),
+            reply_markup=get_theatres_selection_keyboard(theatres, set(default_selected), page=0),
         )
         await state.set_state(TrackFlow.selecting_theatres)
     else:
@@ -354,7 +360,12 @@ async def on_track_action_theatres(query: CallbackQuery, state: FSMContext):
         selected = {t.canonical_id for t in theatres}
         await state.update_data(selected_theatre_ids=list(selected))
         await query.message.edit_reply_markup(reply_markup=get_theatres_selection_keyboard(theatres, selected, page=page))
-        await query.answer()
+        await query.answer("Selected all!")
+        return
+    elif act == "clear":
+        await state.update_data(selected_theatre_ids=[])
+        await query.message.edit_reply_markup(reply_markup=get_theatres_selection_keyboard(theatres, set(), page=page))
+        await query.answer("Cleared selections.")
         return
     elif act == "near5":
         selected = {t.canonical_id for t in theatres[:5]}
@@ -363,7 +374,7 @@ async def on_track_action_theatres(query: CallbackQuery, state: FSMContext):
         await query.answer()
         return
     elif act == "chains":
-        selected = {t.canonical_id for t in theatres if t.chain in ("PVR", "INOX", "Cinepolis", "Miraj", "MovieMax")}
+        selected = {t.canonical_id for t in theatres if t.chain in ("PVR", "INOX", "Cinepolis", "AGS", "Rohini", "Miraj", "MovieMax")}
         await state.update_data(selected_theatre_ids=list(selected))
         await query.message.edit_reply_markup(reply_markup=get_theatres_selection_keyboard(theatres, selected, page=page))
         await query.answer()

@@ -85,40 +85,6 @@ async def handle_list_alerts(message: Message):
 
 
 @router.message(Command("mystatus"))
-async def handle_mystatus(message: Message):
-    async with get_db_session() as session:
-        user = await get_user_by_telegram_id(session, message.from_user.id)
-        if not user:
-            await message.answer("You don't have any alerts yet. Start tracking with /track!")
-            return
-        alerts = await get_user_alerts(session, user.id)
-
-    if not alerts:
-        await message.answer("You currently have no alerts configured.")
-        return
-
-    from ticketnotify.adapters.registry import registry
-    cb_map = {cb["platform"]: cb for cb in registry.get_circuit_statuses()}
-
-    status_lines = ["📊 *Real-Time Alert Watch Status:*\n"]
-    for a in alerts:
-        loc_city = a.location.normalized_city if a.location else "Global"
-        status_emoji = "🟢 Active" if a.status == "active" else "⏸ Paused"
-        status_lines.append(f"🎬 *{a.movie_query}* (Alert #{a.id}) - {status_emoji}")
-        status_lines.append(f"📍 Location: {loc_city} | Speed: {getattr(a, 'urgency', 'WARM')} tier")
-        
-        for p in (a.platforms or []):
-            cb = cb_map.get(p, {})
-            cb_state = cb.get("state", "CLOSED")
-            badge = "🟢 Live & Healthy" if cb_state == "CLOSED" else f"🔴 Degraded ({cb_state})"
-            status_lines.append(f"  • *{p.upper()}*: {badge}")
-
-        status_lines.append("  ⏱ *Status:* Actively polling. No new shows opened yet since baseline.\n")
-
-    await message.answer("\n".join(status_lines), parse_mode="Markdown")
-
-
-@router.message(Command("mystatus"))
 async def handle_mystatus_command(message: Message):
     async with get_db_session() as session:
         user = await get_user_by_telegram_id(session, message.from_user.id)
@@ -126,30 +92,70 @@ async def handle_mystatus_command(message: Message):
             await message.answer("Please send /start to set up your account first.")
             return
         alerts = await get_user_alerts(session, user.id)
+        loc = await get_default_location(session, user.id)
 
-    if not alerts:
-        await message.answer("You have no active alerts. Use /track to start tracking a movie!")
-        return
+    # 1. City & Theatres
+    city = loc.normalized_city if loc else "Chennai"
+    user_theatres = (user.selected_theatres or {}).get("canonical_ids", [])
+    theatre_names = (user.selected_theatres or {}).get("names", [])
+    theatre_count_str = f"{len(user_theatres)} selected" if user_theatres else f"All theatres in {city}"
 
+    chains = getattr(user, "selected_chains", None) or ["PVR", "INOX", "AGS", "Rohini", "Cinepolis"]
+    chains_str = ", ".join(chains[:4])
+
+    # 2. Quiet Hours & Snooze
+    qh = f"🟢 Active ({user.quiet_hours_start}:00 - {user.quiet_hours_end}:00)" if user.quiet_hours_enabled else "🔴 Disabled"
+    if getattr(user, "snoozed_until", None) and user.snoozed_until > datetime.utcnow():
+        snooze_str = f"💤 Snoozed until {user.snoozed_until.strftime('%H:%M UTC')}"
+    elif getattr(user, "alerts_paused", False):
+        snooze_str = "⏸ All Alerts Paused"
+    else:
+        snooze_str = "🟢 Alerts Active"
+
+    # 3. Notification triggers
+    prefs = getattr(user, "notification_preferences", None) or {}
+    active_triggers = [k.replace("_", " ").title() for k, v in prefs.items() if v is True]
+    if not active_triggers:
+        active_triggers = ["Bookings Opened", "New Shows", "Price Drops", "Preferred Seats"]
+
+    # 4. Platform Health
     from ticketnotify.adapters.registry import registry
-    cb_status = {cb["platform"]: cb["state"] for cb in registry.get_circuit_statuses()}
+    cb_statuses = registry.get_circuit_statuses()
+    plat_health = []
+    for cb in cb_statuses:
+        p_name = cb["platform"].upper()
+        p_state = cb["state"]
+        if p_state == "closed":
+            plat_health.append(f"• {p_name}: 🟢 Live & Scanning")
+        else:
+            plat_health.append(f"• {p_name}: 🟡 Cooldown Probe ({cb.get('failure_count', 0)} fails)")
 
-    lines = ["📊 *Your Alert Status Report*\n"]
-    for a in alerts:
-        city = a.location.normalized_city if a.location else "Global"
-        plat_lines = []
-        for p in a.platforms:
-            state = cb_status.get(p, "CLOSED")
-            emoji = "🟢 Healthy" if state == "CLOSED" else "🔴 Temporarily Degraded"
-            plat_lines.append(f"  • {p.upper()}: {emoji}")
+    # 5. Tracked Movies
+    lines = [
+        "📊 *Your TicketNotify Dashboard & Account Status*\n",
+        f"📍 *Selected City:* {city}",
+        f"🏛 *Theatres Monitored:* {theatre_count_str}",
+        f"🏢 *Preferred Chains:* {chains_str}",
+        f"🌙 *Quiet Hours:* {qh}",
+        f"🔔 *Watch Status:* {snooze_str}",
+        f"🎯 *Active Triggers:* {', '.join(active_triggers[:4])}\n",
+        "*📡 Platform Health:*",
+        "\n".join(plat_health),
+        "",
+    ]
 
-        lines.append(
-            f"🎬 *{a.movie_query}* (Alert #{a.id})\n"
-            f"📍 City: {city}\n"
-            f"⚡ Status: {a.status.title()} (Speed: {getattr(a, 'urgency', 'WARM')})\n"
-            f"📡 Platform Health:\n" + "\n".join(plat_lines) + "\n"
-            f"ℹ️ Reason: Actively scanning. Will alert immediately when bookings open.\n"
-        )
+    if alerts:
+        lines.append(f"*🎬 Active Movie Watches ({len(alerts)}):*")
+        for a in alerts:
+            speed = getattr(a, "urgency", "WARM")
+            emoji = "🔥" if speed == "HOT" else "⚡"
+            lines.append(f"• *{a.movie_query}* (Alert #{a.id}) | {emoji} {speed} speed tier | Status: {a.status.title()}")
+            sel_cin = a.selected_cinemas or {}
+            c_names = sel_cin.get("names", [])
+            if c_names:
+                lines.append(f"  🏛 Theatres: {', '.join(c_names[:3])}{'...' if len(c_names) > 3 else ''}")
+    else:
+        lines.append("ℹ️ _No active movie watches. Tap '🎬 Now Showing' or send /track to start!_")
 
     await message.answer("\n".join(lines), parse_mode="Markdown")
 

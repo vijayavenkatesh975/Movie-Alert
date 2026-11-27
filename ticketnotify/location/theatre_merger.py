@@ -1,4 +1,8 @@
-"""Theatre discovery, duplicate merging across platforms using rapidfuzz + Haversine."""
+"""Theatre discovery, duplicate merging across platforms using rapidfuzz + Haversine.
+
+Supports complete city-wide theatre selection (no radius restriction), rich locality/mall metadata,
+and robust cross-platform canonical ID deduplication.
+"""
 
 import asyncio
 import hashlib
@@ -11,6 +15,7 @@ from ticketnotify.adapters.base import Cinema
 from ticketnotify.location.distance import haversine_distance_km
 from ticketnotify.location.models import NormalizedLocation
 from ticketnotify.adapters.registry import registry
+from ticketnotify.location.theatre_directory import get_theatres_by_city
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,13 @@ COMMON_CHAINS = [
     "PVR",
     "INOX",
     "Cinepolis",
+    "AGS",
+    "Rohini",
+    "Mayajaal",
+    "Devi",
+    "Sangam",
+    "Rakki",
+    "EVP",
     "Miraj",
     "MovieMax",
     "SPI",
@@ -25,7 +37,6 @@ COMMON_CHAINS = [
     "Carnival",
     "Mukta A2",
     "Rajhans",
-    "Cinepolis VIP",
 ]
 
 
@@ -34,6 +45,8 @@ class MergedCinema(BaseModel):
     name: str
     city: str
     chain: Optional[str] = None
+    locality: Optional[str] = None
+    mall: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     distance_km: Optional[float] = None
@@ -42,9 +55,19 @@ class MergedCinema(BaseModel):
     platform_cinema_ids: Dict[str, str] = Field(default_factory=dict)
 
     @property
+    def display_platforms(self) -> List[str]:
+        plat_map = {
+            "bms": "BMS",
+            "pvrinox": "PVR",
+            "ticketnew": "TN",
+            "district": "DIST",
+        }
+        return [plat_map.get(p.lower(), p.upper()) for p in self.platform_cinema_ids.keys()]
+
+    @property
     def display_label(self) -> str:
-        """Formatted string for inline buttons: e.g. 'PVR Forum Mall - 2.4 km'"""
-        dist_str = f" - {self.distance_km:.1f} km" if self.distance_km is not None else ""
+        """Formatted string for inline buttons: e.g. 'PVR Palazzo – Vadapalani (2.4 km)'"""
+        dist_str = f" ({self.distance_km:.1f} km)" if self.distance_km is not None else ""
         return f"{self.name}{dist_str}"
 
 
@@ -59,10 +82,9 @@ def extract_chain_from_name(name: str) -> Optional[str]:
 def generate_canonical_id(name: str, city: str, lat: Optional[float], lng: Optional[float]) -> str:
     """Generates a stable deterministic canonical ID for a theatre."""
     if lat is not None and lng is not None:
-        # Round coords to 3 decimals (~110 meters) for spatial bucket grouping
-        key = f"{city.lower()}:{round(lat, 3)}:{round(lng, 3)}:{name.lower()[:10]}"
+        key = f"{city.lower()}:{round(lat, 3)}:{round(lng, 3)}:{name.lower()[:12]}"
     else:
-        key = f"{city.lower()}:{name.lower()}"
+        key = f"{city.lower()}:{name.lower()[:15]}"
     return "cin_" + hashlib.md5(key.encode("utf-8")).hexdigest()[:10]
 
 
@@ -72,8 +94,7 @@ def is_same_theatre(
     max_distance_meters: float = 300.0,
     name_similarity_threshold: float = 75.0,
 ) -> bool:
-    """
-    Checks if a Cinema matches a MergedCinema using Haversine distance < 300m
+    """Checks if a Cinema matches a MergedCinema using Haversine distance < 300m
     and fuzzy name matching with rapidfuzz.
     """
     # 1. Coordinate-based check if both have coordinates
@@ -87,11 +108,9 @@ def is_same_theatre(
         dist_meters = dist_km * 1000.0
 
         if dist_meters <= max_distance_meters:
-            # Under 300 meters: check name similarity
             ratio = rapidfuzz.fuzz.token_set_ratio(c1.name.lower(), c2.name.lower())
             if ratio >= name_similarity_threshold:
                 return True
-            # Also match if both belong to the same chain and are < 300m
             ch1 = c1.chain or extract_chain_from_name(c1.name)
             ch2 = c2.chain or extract_chain_from_name(c2.name)
             if ch1 and ch2 and ch1.lower() == ch2.lower() and ratio >= 55.0:
@@ -110,8 +129,7 @@ def merge_theatres(
     max_distance_meters: float = 300.0,
     name_similarity_threshold: float = 75.0,
 ) -> List[MergedCinema]:
-    """
-    Merges duplicate cinema representations across multiple booking platforms
+    """Merges duplicate cinema representations across multiple booking platforms
     into a canonical list of MergedCinema objects.
     """
     merged: List[MergedCinema] = []
@@ -124,9 +142,7 @@ def merge_theatres(
                 break
 
         if matched:
-            # Map this platform's cinema_id
             matched.platform_cinema_ids[c.platform] = c.cinema_id
-            # Merge missing metadata
             if not matched.chain and c.chain:
                 matched.chain = c.chain
             if matched.latitude is None and c.latitude is not None:
@@ -154,7 +170,7 @@ def merge_theatres(
             )
             merged.append(new_merged)
 
-    # Sort ascending by distance (unknown distance at the end)
+    # Sort ascending by distance when available, otherwise alphabetical
     merged.sort(key=lambda x: (x.distance_km is None, x.distance_km or 999.0, x.name))
     return merged
 
@@ -162,27 +178,135 @@ def merge_theatres(
 async def get_theatres_for_location(
     location: NormalizedLocation,
     platforms: Optional[List[str]] = None,
-    radius_km: float = 10.0,
+    radius_km: Optional[float] = None,
 ) -> List[MergedCinema]:
+    """Fetches all cinemas operating in the user's city across all platforms.
+
+    If radius_km is None, returns ALL theatres in the city without radius filtering.
+    Integrates master city directory records to guarantee complete coverage.
     """
-    Fetches cinemas across all active platforms within radius_km and returns
-    a deduplicated list of canonical theatres sorted by distance.
-    """
+    city_name = location.city or "Chennai"
+    all_cinemas: List[Cinema] = []
+
+    # 1. Seed with verified master directory for this city
+    directory_theatres = get_theatres_by_city(city_name)
+    for dt in directory_theatres:
+        lat = dt.get("latitude")
+        lng = dt.get("longitude")
+        dist = None
+        if lat and lng and location.latitude and location.longitude:
+            dist = round(haversine_distance_km(location.latitude, location.longitude, lat, lng), 2)
+            if radius_km is not None and dist > radius_km:
+                continue
+
+        # Add an entry per platform mapping
+        p_cids = dt.get("platform_cinema_ids", {})
+        for plat, cid in p_cids.items():
+            all_cinemas.append(
+                Cinema(
+                    cinema_id=cid,
+                    platform=plat,
+                    name=dt["name"],
+                    city=city_name,
+                    chain=dt.get("chain"),
+                    latitude=lat,
+                    longitude=lng,
+                    address=dt.get("address"),
+                    distance_km=dist,
+                )
+            )
+
+    # 2. Query live platform adapters
     active_platforms = platforms or location.supported_platforms or ["bms", "ticketnew", "district", "pvrinox"]
     tasks = []
+    effective_radius = radius_km if radius_km is not None else 50.0  # Large boundary for city retrieval
 
     for p in active_platforms:
         adapter = registry.get_adapter(p)
         if adapter and adapter.is_location_supported(location):
-            tasks.append(adapter.get_cinemas(location, radius_km=radius_km))
+            tasks.append(adapter.get_cinemas(location, radius_km=effective_radius))
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, list):
+                all_cinemas.extend(r)
+            elif isinstance(r, Exception):
+                logger.debug(f"Platform cinema query exception: {r}")
 
-    all_cinemas: List[Cinema] = []
-    for r in results:
-        if isinstance(r, list):
-            all_cinemas.extend(r)
-        elif isinstance(r, Exception):
-            logger.warning(f"Error fetching cinemas from platform: {r}")
+    # 3. Deduplicate across platforms
+    merged = merge_theatres(all_cinemas, max_distance_meters=300.0)
 
-    return merge_theatres(all_cinemas, max_distance_meters=300.0)
+    # Populate locality and mall from directory records if matched
+    dir_lookup = {dt["name"].lower(): dt for dt in directory_theatres}
+    for m in merged:
+        for d_name, d_info in dir_lookup.items():
+            if rapidfuzz.fuzz.token_set_ratio(m.name.lower(), d_name) >= 80:
+                if not m.locality and d_info.get("locality"):
+                    m.locality = d_info["locality"]
+                if not m.mall and d_info.get("mall"):
+                    m.mall = d_info["mall"]
+                break
+
+    return merged
+
+
+def get_unique_localities(theatres: List[MergedCinema]) -> List[str]:
+    """Returns sorted unique localities extracted from theatre records."""
+    localities = set()
+    for t in theatres:
+        if t.locality:
+            localities.add(t.locality)
+        elif "–" in t.name or "-" in t.name:
+            sep = "–" if "–" in t.name else "-"
+            parts = t.name.split(sep)
+            if len(parts) > 1:
+                loc = parts[1].strip()
+                if "(" in loc:
+                    loc = loc.split("(")[0].strip()
+                if len(loc) >= 3:
+                    localities.add(loc)
+    return sorted(list(localities))
+
+
+def get_unique_chains(theatres: List[MergedCinema]) -> List[str]:
+    """Returns sorted unique chains present in the theatre list."""
+    chains = set()
+    for t in theatres:
+        ch = t.chain or extract_chain_from_name(t.name)
+        if ch:
+            chains.add(ch)
+    return sorted(list(chains))
+
+
+def filter_and_sort_theatres(
+    theatres: List[MergedCinema],
+    locality: Optional[str] = None,
+    chain: Optional[str] = None,
+    query: Optional[str] = None,
+    sort_by: str = "alpha",  # "alpha" | "distance"
+) -> List[MergedCinema]:
+    """Filters and sorts theatres by locality, chain, search term, and sort mode."""
+    res = list(theatres)
+
+    if locality and locality.lower() != "all":
+        loc_low = locality.lower()
+        res = [t for t in res if (t.locality and loc_low in t.locality.lower()) or loc_low in t.name.lower()]
+
+    if chain and chain.lower() != "all":
+        ch_low = chain.lower()
+        res = [t for t in res if (t.chain and ch_low == t.chain.lower()) or ch_low in t.name.lower()]
+
+    if query and query.strip():
+        q = query.lower().strip()
+        res = [
+            t for t in res
+            if q in t.name.lower() or (t.mall and q in t.mall.lower()) or (t.locality and q in t.locality.lower())
+        ]
+
+    if sort_by == "distance":
+        res.sort(key=lambda x: (x.distance_km is None, x.distance_km or 999.0, x.name))
+    else:
+        res.sort(key=lambda x: x.name.lower())
+
+    return res

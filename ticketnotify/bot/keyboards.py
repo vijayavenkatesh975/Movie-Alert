@@ -21,6 +21,9 @@ def get_language_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🇮🇳 हिन्दी (Hindi)", callback_data="lang:hi"),
             InlineKeyboardButton(text="🇮🇳 తెలుగు (Telugu)", callback_data="lang:te"),
         ],
+        [
+            InlineKeyboardButton(text="🇮🇳 ಕನ್ನಡ (Kannada)", callback_data="lang:kn"),
+        ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -103,6 +106,9 @@ def get_theatres_selection_keyboard(
     selected_ids: Set[str],
     page: int = 0,
     page_size: int = 5,
+    current_locality: Optional[str] = None,
+    current_chain: Optional[str] = None,
+    sort_by: str = "alpha",
 ) -> InlineKeyboardMarkup:
     total = len(theatres)
     total_pages = max(1, (total + page_size - 1) // page_size)
@@ -125,27 +131,74 @@ def get_theatres_selection_keyboard(
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=f"th_page:{page - 1}"))
-    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data=f"th_page:{page}"))
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
         nav_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"th_page:{page + 1}"))
     if len(nav_row) > 1:
         buttons.append(nav_row)
 
-    # Quick action presets
+    # Bulk toggles: Select All & Clear All
     buttons.append([
         InlineKeyboardButton(text="🔘 Select All", callback_data=f"th_act:all:{page}"),
-        InlineKeyboardButton(text="📍 Nearest 5", callback_data=f"th_act:near5:{page}"),
-    ])
-    buttons.append([
-        InlineKeyboardButton(text="🏢 Chains Only (PVR/INOX/Cinepolis)", callback_data=f"th_act:chains:{page}"),
+        InlineKeyboardButton(text="🧹 Clear All", callback_data=f"th_act:clear:{page}"),
     ])
 
-    # Done / Continue
-    count_str = f" ({len(selected_ids)} selected)" if selected_ids else " (All in radius)"
+    # Filter & Sort controls
+    loc_label = f"📍 Locality ({current_locality[:8]}..)" if current_locality and current_locality != "all" else "📍 Filter Locality"
+    chain_label = f"🏢 Chain ({current_chain})" if current_chain and current_chain != "all" else "🏢 Filter Chain"
     buttons.append([
-        InlineKeyboardButton(text=f"➡️ Continue{count_str}", callback_data=f"th_act:done:{page}")
+        InlineKeyboardButton(text=loc_label, callback_data=f"th_act:filt_loc:{page}"),
+        InlineKeyboardButton(text=chain_label, callback_data=f"th_act:filt_chain:{page}"),
+    ])
+
+    sort_label = "📏 Sort: Dist" if sort_by == "alpha" else "🔤 Sort: A-Z"
+    next_sort = "distance" if sort_by == "alpha" else "alpha"
+    buttons.append([
+        InlineKeyboardButton(text=sort_label, callback_data=f"th_act:sort_{next_sort}:{page}"),
+        InlineKeyboardButton(text="🔍 Search Name/Mall", callback_data=f"th_act:search:{page}"),
+    ])
+
+    # Done / Confirm
+    count_str = f" ({len(selected_ids)} Selected)" if selected_ids else " (All Theatres in City)"
+    buttons.append([
+        InlineKeyboardButton(text=f"✅ Confirm Selection{count_str}", callback_data=f"th_act:done:{page}")
     ])
     buttons.append([InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_flow")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_locality_filter_keyboard(localities: List[str], current_loc: Optional[str] = None) -> InlineKeyboardMarkup:
+    """Inline keyboard for filtering theatres by locality."""
+    buttons = []
+    buttons.append([InlineKeyboardButton(text="🌟 All Localities (Show All)", callback_data="th_setloc:all")])
+    # 2 buttons per row
+    row = []
+    for loc in localities:
+        prefix = "👉 " if current_loc and current_loc.lower() == loc.lower() else ""
+        row.append(InlineKeyboardButton(text=f"{prefix}{loc}", callback_data=f"th_setloc:{loc}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Back to Theatres", callback_data="th_act:back:0")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_chain_filter_keyboard(chains: List[str], current_chain: Optional[str] = None) -> InlineKeyboardMarkup:
+    """Inline keyboard for filtering theatres by cinema chain."""
+    buttons = []
+    buttons.append([InlineKeyboardButton(text="🌟 All Chains (Show All)", callback_data="th_setchain:all")])
+    row = []
+    for ch in chains:
+        prefix = "👉 " if current_chain and current_chain.lower() == ch.lower() else ""
+        row.append(InlineKeyboardButton(text=f"{prefix}{ch}", callback_data=f"th_setchain:{ch}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Back to Theatres", callback_data="th_act:back:0")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -261,12 +314,133 @@ def get_discovery_card_keyboard(movie_title: str, is_now_showing: bool = False) 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_discovery_catalog_keyboard(
+    category: str,
+    page: int,
+    total_pages: int,
+    movies: List[dict],
+) -> InlineKeyboardMarkup:
+    """Navigation and quick action keyboard for paginated movie discovery."""
+    buttons = []
+    # 1. Action buttons for movies on the current page
+    for m in movies:
+        safe_title = m["title"][:22].strip()
+        is_now = m.get("is_now_showing", False)
+        prefix = "📊 Track" if is_now else "🚨 Alert"
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{prefix} '{safe_title}'",
+                callback_data=f"disc_open:{m['title'][:25]}",
+            )
+        ])
+
+    # 2. Pagination controls
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="◀️ Prev", callback_data=f"disc_p:{category}:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{max(1, total_pages)}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="Next ▶️", callback_data=f"disc_p:{category}:{page + 1}"))
+    if len(nav_row) > 1:
+        buttons.append(nav_row)
+
+    # 3. Category Switchers
+    cat_row1 = [
+        InlineKeyboardButton(
+            text="🎬 Now Showing" if category != "now_showing" else "👉 🎬 Now Showing",
+            callback_data="disc_cat:now_showing",
+        ),
+        InlineKeyboardButton(
+            text="🗓 Coming Soon" if category != "coming_soon" else "👉 🗓 Coming Soon",
+            callback_data="disc_cat:coming_soon",
+        ),
+    ]
+    cat_row2 = [
+        InlineKeyboardButton(
+            text="⚡ This Week" if category != "this_week" else "👉 ⚡ This Week",
+            callback_data="disc_cat:this_week",
+        ),
+        InlineKeyboardButton(
+            text="📅 This Month" if category != "this_month" else "👉 📅 This Month",
+            callback_data="disc_cat:this_month",
+        ),
+    ]
+    cat_row3 = [
+        InlineKeyboardButton(
+            text="🎞 Recent" if category != "recent" else "👉 🎞 Recent",
+            callback_data="disc_cat:recent",
+        ),
+        InlineKeyboardButton(
+            text="🔍 Search" if category != "search" else "👉 🔍 Search",
+            callback_data="disc_cat:search",
+        ),
+    ]
+    buttons.append(cat_row1)
+    buttons.append(cat_row2)
+    buttons.append(cat_row3)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_settings_keyboard(user) -> InlineKeyboardMarkup:
     qh_status = "🟢 Enabled" if user.quiet_hours_enabled else "🔴 Disabled"
+    pause_label = "▶️ Resume Alerts" if getattr(user, "alerts_paused", False) else "⏸ Pause All Alerts"
+    pause_cb = "resume_all_alerts" if getattr(user, "alerts_paused", False) else "pause_all_alerts"
+
+    snoozed = getattr(user, "snoozed_until", None)
+    snooze_label = "💤 Snoozed (Tap to manage)" if snoozed else "💤 Snooze Notifications"
+
     buttons = [
-        [InlineKeyboardButton(text=f"🌙 Quiet Hours ({qh_status})", callback_data="toggle_quiet_hours")],
-        [InlineKeyboardButton(text=f"⏰ Set Quiet Time ({user.quiet_hours_start}:00 - {user.quiet_hours_end}:00)", callback_data="config_quiet_time")],
+        [InlineKeyboardButton(text="🔔 Customise Alert Triggers", callback_data="manage_notif_prefs")],
+        [
+            InlineKeyboardButton(text=pause_label, callback_data=pause_cb),
+            InlineKeyboardButton(text=snooze_label, callback_data="manage_snooze"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🌙 Quiet Hours ({qh_status})", callback_data="toggle_quiet_hours"),
+            InlineKeyboardButton(text=f"⏰ Set Times ({user.quiet_hours_start}:00-{user.quiet_hours_end}:00)", callback_data="config_quiet_time"),
+        ],
         [InlineKeyboardButton(text=f"🌐 Change Language ({user.language.upper()})", callback_data="change_language")],
         [InlineKeyboardButton(text="🗑 Delete My Account (GDPR)", callback_data="gdpr_delete")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_notification_settings_keyboard(prefs: Dict[str, bool]) -> InlineKeyboardMarkup:
+    """Toggle keyboard for individual notification types."""
+    # Available triggers
+    triggers = [
+        ("bookings_opened", "🚨 Bookings Opened"),
+        ("new_show_added", "✨ New Shows Added"),
+        ("price_drop", "📉 Price Drops"),
+        ("preferred_seats_available", "💺 Preferred Seats Available"),
+        ("seats_filling_fast", "⚡ Filling-Fast Shows"),
+        ("release_date_change", "🗓 Release-Date Changes"),
+    ]
+    buttons = []
+    for key, label in triggers:
+        is_on = prefs.get(key, True)  # Enabled by default
+        check = "✅" if is_on else "◻️"
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{check} {label}",
+                callback_data=f"tog_notif:{key}",
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="⬅️ Back to Settings", callback_data="back_to_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_snooze_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for selecting snooze durations."""
+    buttons = [
+        [
+            InlineKeyboardButton(text="⏱ 1 Hour", callback_data="set_snooze:1"),
+            InlineKeyboardButton(text="⏱ 4 Hours", callback_data="set_snooze:4"),
+        ],
+        [
+            InlineKeyboardButton(text="🌙 24 Hours", callback_data="set_snooze:24"),
+            InlineKeyboardButton(text="🔔 Turn Off Snooze", callback_data="set_snooze:0"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Back to Settings", callback_data="back_to_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

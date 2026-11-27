@@ -36,6 +36,16 @@ class User(Base):
     quiet_hours_enabled = Column(Boolean, default=False, nullable=False)
     quiet_hours_start = Column(Integer, default=23, nullable=False)
     quiet_hours_end = Column(Integer, default=7, nullable=False)
+
+    # City-wide theatre preferences: {"city": "Chennai", "canonical_ids": [...], "names": [...], "platform_cinema_ids": {...}}
+    selected_theatres = Column(JSON, default=dict, nullable=False)
+    selected_chains = Column(JSON, default=list, nullable=False)
+
+    # Notification customization preferences
+    notification_preferences = Column(JSON, default=dict, nullable=False)
+    alerts_paused = Column(Boolean, default=False, nullable=False)
+    snoozed_until = Column(DateTime, nullable=True)
+    non_critical_frequency = Column(String(20), default="instant", nullable=False)
     
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

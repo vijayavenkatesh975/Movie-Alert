@@ -33,6 +33,8 @@ class PlatformCircuitBreaker:
         self.last_failure_time: Optional[float] = None
         self.last_state_change: float = time.time()
         self.last_error_message: Optional[str] = None
+        self.last_alert_time: Optional[float] = None
+        self.alert_cooldown_seconds: float = 3600.0  # Alert admin at most once per hour per platform
 
     def can_execute(self) -> bool:
         """Determines if a request should be attempted."""
@@ -83,8 +85,16 @@ class PlatformCircuitBreaker:
                 f"🚨 Circuit breaker TRIPPED to OPEN for [{self.platform_name}]! Platform temporarily disabled."
             )
 
-            # Trigger alert to admin if callback provided and was previously closed
-            if prev_state != CircuitState.OPEN and self.on_break_callback:
+            # Trigger alert to admin if callback provided and was previously closed (rate-limited by cooldown)
+            now = time.time()
+            can_alert = (
+                self.on_break_callback is not None
+                and prev_state == CircuitState.CLOSED
+                and (self.last_alert_time is None or now - self.last_alert_time >= self.alert_cooldown_seconds)
+            )
+
+            if can_alert:
+                self.last_alert_time = now
                 try:
                     await self.on_break_callback(
                         self.platform_name,

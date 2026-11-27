@@ -73,6 +73,62 @@ async def update_user_quiet_hours(
     await session.execute(stmt)
 
 
+async def update_user_selected_theatres(
+    session: AsyncSession,
+    user_id: int,
+    theatre_data: Dict[str, Any],
+    chains: Optional[List[str]] = None,
+) -> None:
+    """Persists user default city-wide theatre selection and preferred chains."""
+    values: Dict[str, Any] = {
+        "selected_theatres": theatre_data,
+        "updated_at": datetime.utcnow(),
+    }
+    if chains is not None:
+        values["selected_chains"] = chains
+    stmt = update(User).where(User.id == user_id).values(**values)
+    await session.execute(stmt)
+
+
+async def update_user_notification_preferences(
+    session: AsyncSession,
+    user_id: int,
+    prefs: Dict[str, bool],
+) -> None:
+    """Updates user notification trigger preferences (bookings_opened, price_drop, etc.)."""
+    stmt = update(User).where(User.id == user_id).values(
+        notification_preferences=prefs,
+        updated_at=datetime.utcnow(),
+    )
+    await session.execute(stmt)
+
+
+async def set_user_alerts_paused(
+    session: AsyncSession,
+    user_id: int,
+    paused: bool,
+) -> None:
+    """Pauses or resumes all alert notifications for user."""
+    stmt = update(User).where(User.id == user_id).values(
+        alerts_paused=paused,
+        updated_at=datetime.utcnow(),
+    )
+    await session.execute(stmt)
+
+
+async def set_user_snooze(
+    session: AsyncSession,
+    user_id: int,
+    snooze_until: Optional[datetime],
+) -> None:
+    """Snoozes all notifications until specified timestamp."""
+    stmt = update(User).where(User.id == user_id).values(
+        snoozed_until=snooze_until,
+        updated_at=datetime.utcnow(),
+    )
+    await session.execute(stmt)
+
+
 async def delete_user_data_gdpr(session: AsyncSession, telegram_id: int) -> bool:
     """GDPR-friendly wipe: permanently delete all data associated with telegram_id."""
     stmt = select(User).where(User.telegram_id == telegram_id)
